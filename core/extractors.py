@@ -187,9 +187,13 @@ class Extractor:
         # Match any <span> that has class "quickedit-vn" and a data-id attribute
         # regardless of attribute order, spacing, or additional classes.
         pattern = re.compile(
-            r'<span\b(?=[^>]*class\s*=\s*"[^"]*quickedit-vn[^"]*")'
-            r'(?=[^>]*data-id\s*=\s*"(\w+)")[^>]*>',
-            re.IGNORECASE,
+            r"""
+            <span\b
+            (?=[^>]*class\s*=\s*['"][^'\"]*quickedit-vn[^'\"]*['"])
+            (?=[^>]*data-id\s*=\s*['"](\w+)['"])
+            [^>]*>
+            """,
+            re.IGNORECASE | re.VERBOSE,
         )
 
         matches = pattern.findall(res)

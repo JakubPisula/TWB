@@ -2,6 +2,7 @@
 
 import json
 import re
+from html.parser import HTMLParser
 from typing import List
 
 
@@ -184,16 +185,25 @@ class Extractor:
         if not isinstance(res, str):
             res = res.text
 
-        # Match any <span> that has class "quickedit-vn" and a data-id attribute
-        # regardless of attribute order, spacing, or additional classes.
-        pattern = re.compile(
-            r'<span\b(?=[^>]*class\s*=\s*"[^"]*quickedit-vn[^"]*")'
-            r'(?=[^>]*data-id\s*=\s*"(\w+)")[^>]*>',
-            re.IGNORECASE,
-        )
+        class _VillageIdParser(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.found: List[str] = []
 
-        matches = pattern.findall(res)
-        return list(dict.fromkeys(matches))
+            def handle_starttag(self, tag, attrs):
+                if tag.lower() != "span":
+                    return
+                attr_map = {key.lower(): value for key, value in attrs if value is not None}
+                data_id = attr_map.get("data-id")
+                classes = attr_map.get("class", "").lower()
+                if not data_id or "quickedit-vn" not in classes.split():
+                    return
+                self.found.append(str(data_id))
+
+        parser = _VillageIdParser()
+        parser.feed(res)
+        # Preserve encounter order but drop duplicates.
+        return list(dict.fromkeys(parser.found))
 
     @staticmethod
     def units_in_total(res):

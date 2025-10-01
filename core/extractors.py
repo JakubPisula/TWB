@@ -182,6 +182,9 @@ class Extractor:
         Extracts village IDs from the TribalWars.updateGameData JSON.
         This is a fallback method when quickedit-vn elements are not present
         (e.g., when the server returns 'overview' instead of 'overview_villages').
+
+        For multi-village accounts, this extracts all village IDs from the
+        game_data["villages"] mapping when available.
         """
         if not isinstance(res, str):
             res = res.text
@@ -193,13 +196,17 @@ class Extractor:
 
         village_ids = []
 
-        # Try to get current village ID
-        if "village" in game_data and "id" in game_data["village"]:
+        # Method 1: Try to get all villages from the villages mapping (multi-village accounts)
+        # The game_data JSON contains a "villages" object with all owned villages
+        if "villages" in game_data and isinstance(game_data["villages"], dict):
+            # Villages mapping contains village_id as keys
+            village_ids.extend([str(vid) for vid in game_data["villages"].keys()])
+
+        # Method 2: Fallback to current village ID if no villages mapping exists
+        # This handles edge cases and single-village accounts
+        if not village_ids and "village" in game_data and "id" in game_data["village"]:
             village_id = str(game_data["village"]["id"])
             village_ids.append(village_id)
-
-        # For multi-village accounts, we might need to make additional requests
-        # or parse other data sources, but for single-village this is sufficient
 
         return village_ids
 

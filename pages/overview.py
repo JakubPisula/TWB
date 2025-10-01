@@ -220,6 +220,15 @@ class OverviewPage:
         self.wrapper: WebWrapper = wrapper
         self.world_settings: WorldSettings = WorldSettings()
         self.result_get: Response = self._get_overview_villages_data()
+        self.received_screen = self._detect_screen_type()
+
+        # Log warning if we received the wrong screen
+        if self.received_screen != "overview_villages":
+            logger.warning(
+                f"Expected 'overview_villages' screen but received '{self.received_screen}'. "
+                "This may cause issues with village detection. Using fallback methods."
+            )
+
         self.soup = BeautifulSoup(self.result_get.text, "html.parser")
         self.header_info = self.soup.find("table", id="header_info")
         self.production_table = self.soup.find("table", id="production_table")
@@ -230,6 +239,24 @@ class OverviewPage:
     def _get_overview_villages_data(self):
         """Get the overview villages data using the wrapper object."""
         return self.wrapper.get_url("game.php?screen=overview_villages")
+
+    def _detect_screen_type(self) -> str:
+        """
+        Detects which screen type was actually returned by the server.
+
+        Returns:
+            str: The screen type ('overview', 'overview_villages', or 'unknown')
+        """
+        try:
+            text = self.result_get.text
+            # Look for the screen parameter in the game data JSON
+            match = re.search(r'"screen"\s*:\s*"([^"]+)"', text)
+            if match:
+                return match.group(1)
+        except Exception as e:
+            logger.error(f"Error detecting screen type: {e}")
+
+        return "unknown"
 
     def parse_production_table(self):
         """Parse the production table to extract village data."""

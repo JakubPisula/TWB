@@ -2,6 +2,7 @@
 
 import json
 import re
+from html.parser import HTMLParser
 from typing import List
 
 
@@ -177,71 +178,32 @@ class Extractor:
         return builder
 
     @staticmethod
-    def village_ids_from_game_data(res) -> List[str]:
-        """
-        Extracts village IDs from the TribalWars.updateGameData JSON.
-        This is a fallback method when quickedit-vn elements are not present
-        (e.g., when the server returns 'overview' instead of 'overview_villages').
-        """
-        if not isinstance(res, str):
-            res = res.text
-
-        # Extract the game data JSON
-        game_data = Extractor.game_state(res)
-        if not game_data:
-            return []
-
-        village_ids = []
-
-        # Try to get current village ID
-        if "village" in game_data and "id" in game_data["village"]:
-            village_id = str(game_data["village"]["id"])
-            village_ids.append(village_id)
-
-        # For multi-village accounts, we might need to make additional requests
-        # or parse other data sources, but for single-village this is sufficient
-
-        return village_ids
-
-    @staticmethod
     def village_ids_from_overview(res) -> List[str]:
         """
-        Fetches villages from the overview page.
-        Uses quickedit-vn elements as primary method with game_data JSON as fallback.
+        Fetches villages from the overview page
         """
         if not isinstance(res, str):
             res = res.text
 
-        # Primary method: Look for quickedit-vn elements (works on overview_villages page)
-        # Use two patterns to handle both attribute orders
-        pattern1 = re.compile(
-            r'<[a-zA-Z0-9]+\s+[^>]*?class=["\']([^"\']*\bquickedit-vn\b[^"\']*)["\'][^>]*?data-id=["\'](\d+)["\']',
-            re.IGNORECASE
-        )
-        pattern2 = re.compile(
-            r'<[a-zA-Z0-9]+\s+[^>]*?data-id=["\'](\d+)["\'][^>]*?class=["\']([^"\']*\bquickedit-vn\b[^"\']*)["\']',
-            re.IGNORECASE
-        )
+        class _VillageIdParser(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.found: List[str] = []
 
-        # Find all matches with their positions to preserve order
-        all_matches = []
+            def handle_starttag(self, tag, attrs):
+                if tag.lower() != "span":
+                    return
+                attr_map = {key.lower(): value for key, value in attrs if value is not None}
+                data_id = attr_map.get("data-id")
+                classes = attr_map.get("class", "").lower()
+                if not data_id or "quickedit-vn" not in classes.split():
+                    return
+                self.found.append(str(data_id))
 
-        for match in pattern1.finditer(res):
-            all_matches.append((match.start(), match.group(2)))  # (position, id)
-
-        for match in pattern2.finditer(res):
-            all_matches.append((match.start(), match.group(1)))  # (position, id)
-
-        # Sort by position and extract IDs, then deduplicate while preserving order
-        all_matches.sort(key=lambda x: x[0])
-        village_ids = list(dict.fromkeys([id for pos, id in all_matches]))
-
-        # Fallback: If no villages found via quickedit-vn, try game_data JSON
-        # This handles cases where server returns 'overview' instead of 'overview_villages'
-        if not village_ids:
-            village_ids = Extractor.village_ids_from_game_data(res)
-
-        return village_ids
+        parser = _VillageIdParser()
+        parser.feed(res)
+        # Preserve encounter order but drop duplicates.
+        return list(dict.fromkeys(parser.found))
 
     @staticmethod
     def units_in_total(res):

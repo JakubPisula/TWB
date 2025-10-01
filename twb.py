@@ -211,8 +211,32 @@ class TWB:
         """
         Gets the overview page to automatically detect world options and owned villages
         """
+        logger = logging.getLogger("TWB")
         overview_page = OverviewPage(self.wrapper)
         self.found_villages = Extractor.village_ids_from_overview(overview_page.result_get.text)
+
+        # Debug logging for village detection
+        if not self.found_villages:
+            logger.warning(
+                "No villages were detected from the overview page! "
+                "This usually means the server returned the wrong page type "
+                f"(e.g., 'overview' instead of 'overview_villages'). "
+                f"Server returned screen type: '{overview_page.received_screen}'. "
+                "Falling back to config file villages."
+            )
+            # Ultimate fallback: Use villages from config file
+            if "villages" in config and config["villages"]:
+                self.found_villages = list(config["villages"].keys())
+                logger.info(
+                    f"Using {len(self.found_villages)} village(s) from config file: {self.found_villages}"
+                )
+            else:
+                logger.error("No villages found in config file either!")
+        else:
+            logger.info(
+                f"Successfully detected {len(self.found_villages)} village(s): {self.found_villages}"
+            )
+
         if config["bot"].get("add_new_villages", False):
             for found_vid in self.found_villages:
                 if found_vid not in config["villages"]:
@@ -351,11 +375,13 @@ class TWB:
                     FileManager.save_json_file(config, "config.json")
                     print("Deployed new configuration file")
                 village_number = 1
+                logger = logging.getLogger("TWB")
                 for village in self.villages:
                     if village.village_id not in self.found_villages:
-                        print(
-                            "Village %s will be ignored because it is not available anymore"
-                            % village.village_id
+                        logger.warning(
+                            f"Village {village.village_id} will be ignored because it was not detected "
+                            f"in the overview page. Found villages: {self.found_villages}. "
+                            f"This might be a detection issue rather than the village being unavailable."
                         )
                         continue
                     if not rm:

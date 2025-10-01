@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//mnt/c/Users/OzyMelBu/Desktop/**)",
+      "Bash(cd:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

@@ -1,4 +1,13 @@
 ### Unreleased
+- **Fixed critical village detection bug**: Villages are now reliably detected even when the server returns different page types
+  - Added multi-layer fallback system for village ID extraction
+  - Primary: Parse `quickedit-vn` elements from `overview_villages` page
+  - Fallback 1: Extract village ID from `TribalWars.updateGameData()` JSON
+  - Fallback 2: Use village IDs from config file as last resort
+  - Improved regex to handle different HTML attribute orders (class/data-id)
+  - Added response validation to detect when server returns wrong page type
+  - Enhanced error logging with detailed diagnostics for troubleshooting
+  - Fixed issue where 1-village accounts would have villages ignored due to server redirect
 - Added configurable Farm-Beutelimit-Schutz – der Farm-Manager stoppt Farm- und Scout-Läufe automatisch, sobald das Weltlimit erreicht ist (inkl. Margin/Overrides).
 
 ### New in 1.6

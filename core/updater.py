@@ -3,10 +3,15 @@ Update checking logic
 """
 
 import json
+import logging
 import os.path
 import time
+
 import requests
-import logging
+
+
+REMOTE_CONFIG_URL = "https://raw.githubusercontent.com/stefan2200/TWB/master/config.example.json"
+REQUEST_TIMEOUT = (5, 15)
 
 
 def check_update():
@@ -32,9 +37,13 @@ def check_update():
                 return
     with open(get_local_config_template_version, "r", encoding="utf-8") as local_cf:
         parsed = json.load(fp=local_cf)
-        get_remote_version = requests.get(
-            "https://raw.githubusercontent.com/stefan2200/TWB/master/config.example.json"
-        ).json()
+        try:
+            response = requests.get(REMOTE_CONFIG_URL, timeout=REQUEST_TIMEOUT)
+            response.raise_for_status()
+            get_remote_version = response.json()
+        except requests.RequestException as exc:
+            logging.warning("Unable to check for updates: %s", exc)
+            return
         if parsed["build"]["version"] != get_remote_version["build"]["version"]:
             logging.warning(
                 "There is a new version of the bot available. \n"

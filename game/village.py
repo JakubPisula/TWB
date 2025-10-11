@@ -77,37 +77,63 @@ class Village:
         """
         Init the village entry and send first request
         """
-        if not self.village_id:
-            data = self.wrapper.get_url("game.php?screen=overview&intro")
-            if data:
-                self.game_data = Extractor.game_state(data)
-            if self.game_data:
-                self.village_id = str(self.game_data["village"]["id"])
-                self.logger = logging.getLogger(
-                    "Village %s" % self.game_data["village"]["name"]
-                )
-                self.logger.info("Read game state for village")
-        else:
-            data = self.wrapper.get_url(
-                f"game.php?village={self.village_id}&screen=overview"
+        self.game_data = None
+        initializing = not bool(self.village_id)
+
+        if not self.logger:
+            logger_name = f"Village {self.village_id or 'unknown'}"
+            self.logger = logging.getLogger(logger_name)
+
+        target = (
+            "game.php?screen=overview&intro"
+            if initializing
+            else f"game.php?village={self.village_id}&screen=overview"
+        )
+
+        response = self.wrapper.get_url(target)
+        if not response:
+            self.logger.warning(
+                "Failed to fetch overview page for village %s",
+                self.village_id or "unknown",
             )
-            if data:
-                self.game_data = Extractor.game_state(data)
-                self.logger = logging.getLogger(
-                    "Village %s" % self.game_data["village"]["name"]
-                )
-                self.logger.info("Read game state for village")
-                self.wrapper.reporter.report(
-                    self.village_id,
-                    "TWB_START",
-                    "Starting run for village: %s" % self.game_data["village"]["name"],
-                )
+            return None
+
+        parsed_state = Extractor.game_state(response)
+        village_info = parsed_state.get("village") if parsed_state else None
+        if not village_info:
+            status = getattr(response, "status_code", "unknown")
+            url = getattr(response, "url", "unknown")
+            self.logger.warning(
+                "Overview page missing game state (status %s, url %s)",
+                status,
+                url,
+            )
+            snippet = getattr(response, "text", "")
+            if snippet:
+                self.logger.debug("Overview snippet: %s", snippet[:200])
+            return response
+
+        self.game_data = parsed_state
+        if initializing and village_info.get("id") is not None:
+            self.village_id = str(village_info["id"])
+
+        village_name = village_info.get("name", self.village_id)
+        self.logger = logging.getLogger(f"Village {village_name}")
+        self.logger.info("Read game state for village")
+
+        if not initializing:
+            self.wrapper.reporter.report(
+                self.village_id,
+                "TWB_START",
+                "Starting run for village: %s" % village_info.get("name", "unknown"),
+            )
+
         if (
                 self.village_set_name
-                and self.game_data["village"]["name"] != self.village_set_name
+                and village_info.get("name") != self.village_set_name
         ):
             self.logger.name = f"Village {self.village_set_name}"
-        return data
+        return response
 
     def set_world_config(self):
         """
@@ -321,8 +347,8 @@ class Village:
             end_dt = datetime.strptime(time_pairs["end"], "%d.%m.%y %H:%M:%S")
             now = datetime.now()
             if start_dt.date() == datetime.today().date():
-                forced_peace_today = True
-                forced_peace_today_start = start_dt
+                self.forced_peace_today = True
+                self.forced_peace_today_start = start_dt
             if start_dt < now < end_dt:
                 self.logger.debug("Currently in a forced peace time! No attacks will be send.")
                 self.forced_peace = True
@@ -576,10 +602,14 @@ class Village:
         data = self.village_init()
 
         if not self.game_data:
-            self.logger.error(
-                "Error reading game data for village %s", self.village_id
+            logger = self.logger or logging.getLogger(
+                f"Village {self.village_id or 'unknown'}"
             )
-            raise VillageInitException
+            logger.error(
+                "Skipping village %s because game data could not be parsed",
+                self.village_id or "unknown",
+            )
+            return False
 
         self.set_world_config()
 

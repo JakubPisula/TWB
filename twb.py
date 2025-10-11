@@ -47,6 +47,8 @@ coloredlogs.install(
     fmt="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 
+LOGGER = logging.getLogger("TWB")
+
 logging.getLogger("requests").setLevel(logging.WARNING)
 logging.getLogger("urllib3").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
@@ -57,7 +59,7 @@ os.chdir(os.path.dirname(os.path.realpath(__file__)))
 
 
 def signal_handler(sig, frame):
-    print('Exiting...')
+    LOGGER.info('Exiting...')
     sys.exit(0)
 
 
@@ -148,10 +150,10 @@ class TWB:
             template["bot"]["user_agent"] = browser_ua
 
             FileManager.save_json_file(template, "config.json")
-            print("Deployed new configuration file")
+            LOGGER.info("Deployed new configuration file")
             return True
 
-        print("Make sure your url starts with https:// and contains the game.php? part")
+        LOGGER.info("Make sure your url starts with https:// and contains the game.php? part")
         return self.manual_config()
 
     def config(self):
@@ -166,14 +168,14 @@ class TWB:
             if self.manual_config():
                 return self.config()
 
-            print("No config file found. Exiting")
+            LOGGER.error("No config file found. Exiting")
             sys.exit(1)
 
         config = FileManager.load_json_file("config.json", object_pairs_hook=collections.OrderedDict)
 
         if template and config["build"]["version"] != template["build"]["version"]:
-            print(
-                "Outdated config file found, merging (old copy saved as config.bak)\n"
+            LOGGER.info(
+                "Outdated config file found, merging (old copy saved as config.bak). "
                 "Remove config.example.json to disable this behavior"
             )
             FileManager.copy_file("config.json", "config.bak")
@@ -181,7 +183,7 @@ class TWB:
             config = self.merge_configs(config, template)
             FileManager.save_json_file(config, "config.json")
 
-            print("Deployed new configuration file")
+            LOGGER.info("Deployed new configuration file")
 
         return config
 
@@ -211,13 +213,38 @@ class TWB:
         """
         Gets the overview page to automatically detect world options and owned villages
         """
+        logger = logging.getLogger("TWB")
         overview_page = OverviewPage(self.wrapper)
         self.found_villages = Extractor.village_ids_from_overview(overview_page.result_get.text)
+
+        # Debug logging for village detection
+        if not self.found_villages:
+            logger.warning(
+                "No villages were detected from the overview page! "
+                "This usually means the server returned the wrong page type "
+                f"(e.g., 'overview' instead of 'overview_villages'). "
+                f"Server returned screen type: '{overview_page.received_screen}'. "
+                "Falling back to config file villages."
+            )
+            # Ultimate fallback: Use villages from config file
+            if "villages" in config and config["villages"]:
+                self.found_villages = list(config["villages"].keys())
+                logger.info(
+                    f"Using {len(self.found_villages)} village(s) from config file: {self.found_villages}"
+                )
+            else:
+                logger.error("No villages found in config file either!")
+        else:
+            logger.info(
+                f"Successfully detected {len(self.found_villages)} village(s): {self.found_villages}"
+            )
+
         if config["bot"].get("add_new_villages", False):
             for found_vid in self.found_villages:
                 if found_vid not in config["villages"]:
-                    print(
-                        f"Village {found_vid} was found but no config entry was found. Adding automatically"
+                    LOGGER.info(
+                        "Village %s was found but no config entry was found. Adding automatically",
+                        found_vid,
                     )
                     config = self.add_village(village_id=found_vid)
 
@@ -231,13 +258,13 @@ class TWB:
         FileManager.copy_file("config.json", "config.bak")
 
         if not template and "village_template" not in original:
-            print(f"Village entry {village_id} could not be added to the config file!")
+            LOGGER.warning("Village entry %s could not be added to the config file!", village_id)
             return
 
         original["villages"][village_id] = template if template else original["village_template"]
 
         FileManager.save_json_file(original, "config.json")
-        print("Deployed new configuration file")
+        LOGGER.info("Deployed new configuration file")
         return original
 
     @staticmethod
@@ -284,7 +311,7 @@ class TWB:
         Notification.send("TWB is starting up")
         config = self.config()
         if not self.internet_online():
-            print("Internet seems to be down, waiting till its back online...")
+            LOGGER.warning("Internet seems to be down, waiting till it's back online...")
             sleep = 0
             if self.is_active_hours(config=config):
                 sleep = config["bot"]["active_delay"]
@@ -295,11 +322,17 @@ class TWB:
             sleep += random.randint(20, 120)
             dtn = datetime.datetime.now()
             dt_next = dtn + datetime.timedelta(0, sleep)
-            print(
-                "Dead for %.2f minutes (next run at: %s)" % (sleep / 60, dt_next.time())
+            LOGGER.info(
+                "Sleeping for %.2f minutes (next run at: %s)",
+                sleep / 60,
+                dt_next.time(),
             )
             time.sleep(sleep)
             return False
+
+        request_timeout = config["bot"].get("request_timeout")
+        request_retries = config["bot"].get("request_retries", 3)
+        request_retry_backoff = config["bot"].get("request_retry_backoff", 1.5)
 
         self.wrapper = WebWrapper(
             config["server"]["endpoint"],
@@ -307,12 +340,15 @@ class TWB:
             endpoint=config["server"]["endpoint"],
             reporter_enabled=config["reporting"]["enabled"],
             reporter_constr=config["reporting"]["connection_string"],
+            request_timeout=request_timeout,
+            max_retries=request_retries,
+            retry_backoff=request_retry_backoff,
         )
 
         self.wrapper.start()
         if not config["bot"].get("user_agent", None):
-            print(
-                "No custom user agent was supplied, this will likely get you banned."
+            LOGGER.warning(
+                "No custom user agent was supplied, this will likely get you banned. "
                 "Please set the bot -> user_agent parameter to your browsers one. "
                 "Just google what is my user agent"
             )
@@ -326,7 +362,7 @@ class TWB:
         defense_states = {}
         while self.should_run:
             if not self.internet_online():
-                print("Internet seems to be down, waiting till its back online...")
+                LOGGER.warning("Internet seems to be down, waiting till it's back online...")
                 sleep = 0
                 if self.is_active_hours(config=config):
                     sleep = config["bot"]["active_delay"]
@@ -337,8 +373,10 @@ class TWB:
                 sleep += random.randint(20, 120)
                 dtn = datetime.datetime.now()
                 dt_next = dtn + datetime.timedelta(0, sleep)
-                print(
-                    "Dead for %.2f minutes (next run at: %s)" % (sleep / 60, dt_next.time())
+                LOGGER.info(
+                    "Sleeping for %.2f minutes (next run at: %s)",
+                    sleep / 60,
+                    dt_next.time(),
                 )
                 time.sleep(sleep)
             else:
@@ -346,16 +384,18 @@ class TWB:
                 overview_page, config = self.get_overview(config)
                 has_changed, new_cf = self.get_world_options(overview_page, config)
                 if has_changed:
-                    print("Updated world options")
+                    LOGGER.info("Updated world options")
                     config = self.merge_configs(config, new_cf)
                     FileManager.save_json_file(config, "config.json")
-                    print("Deployed new configuration file")
+                    LOGGER.info("Deployed new configuration file")
                 village_number = 1
+                logger = logging.getLogger("TWB")
                 for village in self.villages:
                     if village.village_id not in self.found_villages:
-                        print(
-                            "Village %s will be ignored because it is not available anymore"
-                            % village.village_id
+                        logger.warning(
+                            f"Village {village.village_id} will be ignored because it was not detected "
+                            f"in the overview page. Found villages: {self.found_villages}. "
+                            f"This might be a detection issue rather than the village being unavailable."
                         )
                         continue
                     if not rm:
@@ -393,7 +433,7 @@ class TWB:
 
                 if len(defense_states) and config["farms"]["farm"]:
                     for village in self.villages:
-                        print("Syncing attack states")
+                        LOGGER.info("Syncing attack states")
                         village.def_man.my_other_villages = defense_states
 
                 sleep = 0
@@ -409,9 +449,10 @@ class TWB:
                 self.runs += 1
 
                 VillageManager.farm_manager(verbose=True)
-                print(
-                    "Dead for %.2f minutes (next run at: %s)"
-                    % (sleep / 60, dt_next.time())
+                LOGGER.info(
+                    "Sleeping for %.2f minutes (next run at: %s)",
+                    sleep / 60,
+                    dt_next.time(),
                 )
                 sys.stdout.flush()
                 time.sleep(sleep)
@@ -444,8 +485,12 @@ def main():
         try:
             t.start()
         except Exception as e:
-            t.wrapper.reporter.report(0, "TWB_EXCEPTION", str(e))
-            print("I crashed :(   %s" % str(e))
+            reporter = None
+            if getattr(t, "wrapper", None):
+                reporter = getattr(t.wrapper, "reporter", None)
+            if reporter:
+                reporter.report(0, "TWB_EXCEPTION", str(e))
+            LOGGER.error("I crashed :( %s", str(e))
             Notification.send("TWB crashed: %s" % str(e))
             traceback.print_exc()
 

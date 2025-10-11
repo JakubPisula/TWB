@@ -17,6 +17,7 @@ class TwStats:
     """
     Default max building levels
     """
+    REQUEST_TIMEOUT = (5, 30)
     max_levels = {
         'main': 30,
         'barracks': 25,
@@ -51,7 +52,12 @@ class TwStats:
         output = defaultdict(dict)
         for upgrade_building in self.max_levels:
             geturl = f"http://twstats.com/{world}/index.php?page=buildings&detail={upgrade_building}"
-            res = requests.get(geturl)
+            try:
+                res = requests.get(geturl, timeout=self.REQUEST_TIMEOUT)
+                res.raise_for_status()
+            except requests.RequestException as exc:
+                self.logger.warning("Failed to fetch TWStats data for %s: %s", upgrade_building, exc)
+                continue
             table = pq(res.content).find("table.vis")
 
             for tr in table("tr")[1:]:

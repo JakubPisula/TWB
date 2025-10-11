@@ -1,9 +1,13 @@
 import collections
 import json
+import logging
 import os
 import subprocess
 
 import psutil
+
+
+LOGGER = logging.getLogger("WebManager")
 
 
 class DataReader:
@@ -25,7 +29,7 @@ class DataReader:
                 try:
                     output[existing.replace('.json', '')] = json.load(f)
                 except Exception as e:
-                    print("Cache read error for %s: %s. Removing broken entry" % (t_path, str(e)))
+                    LOGGER.warning("Cache read error for %s: %s. Removing broken entry", t_path, e)
                     f.close()
                     os.remove(t_path)
 
@@ -64,7 +68,7 @@ class DataReader:
                 template[parameter] = value
             with open(config_file_path, 'w') as newcf:
                 json.dump(template, newcf, indent=2, sort_keys=False)
-                print("Deployed new configuration file")
+                LOGGER.info("Deployed new configuration file")
                 return True
 
     @staticmethod
@@ -80,7 +84,7 @@ class DataReader:
                 template['villages'][str(village_id)][parameter] = value
             with open(config_file_path, 'w') as newcf:
                 json.dump(template, newcf, indent=2, sort_keys=False)
-                print("Deployed new configuration file")
+                LOGGER.info("Deployed new configuration file")
                 return True
 
     @staticmethod
@@ -199,9 +203,9 @@ class BotManager:
         wd = os.path.join(os.path.dirname(__file__), "..")
         proc = subprocess.Popen("python twb.py", cwd=wd, shell=True)
         self.pid = proc.pid
-        print("Bot started successfully")
+        LOGGER.info("Bot started successfully")
 
     def stop(self):
         if self.is_running():
             os.kill(self.pid, sig=0)
-            print("Bot stopped successfully")
+            LOGGER.info("Bot stopped successfully")

@@ -35,7 +35,17 @@ class WebWrapper:
     reporter = None
     delay = 1.0
 
-    def __init__(self, url, server=None, endpoint=None, reporter_enabled=False, reporter_constr=None):
+    def __init__(
+            self,
+            url,
+            server=None,
+            endpoint=None,
+            reporter_enabled=False,
+            reporter_constr=None,
+            request_timeout=None,
+            max_retries=3,
+            retry_backoff=1.5,
+    ):
         """
         Construct the session and detect variables
         """
@@ -44,6 +54,9 @@ class WebWrapper:
         self.server = server
         self.endpoint = endpoint
         self.reporter = ReporterObject(enabled=reporter_enabled, connection_string=reporter_constr)
+        self.request_timeout = self._normalize_timeout(request_timeout)
+        self.max_retries = max(1, int(max_retries))
+        self.retry_backoff = retry_backoff if retry_backoff and retry_backoff > 0 else 1.5
 
     def post_process(self, response):
         """
@@ -66,48 +79,119 @@ class WebWrapper:
         Fetches a URL using a basic GET request
         """
         self.headers['Origin'] = (self.endpoint if self.endpoint else self.auth_endpoint).rstrip('/')
-        if not self.priority_mode:
-            time.sleep(random.randint(int(3 * self.delay), int(7 * self.delay)))
+        self._sleep_human_delay()
         url = urljoin(self.endpoint if self.endpoint else self.auth_endpoint, url)
-        if not headers:
-            headers = self.headers
-        try:
-            res = self.web.get(url=url, headers=headers)
-            self.logger.debug("GET %s [%d]", url, res.status_code)
-            self.post_process(res)
-            if 'data-bot-protect="forced"' in res.text:
-                self.logger.warning("Bot protection hit! cannot continue")
-                self.reporter.report(
-                    0, "TWB_RECAPTCHA", "Stopping bot, press any key once captcha has been solved")
-                Notification.send("Bot protection hit! cannot continue")
-                input("Press any key...")
-                return self.get_url(url, headers)
-            return res
-        except Exception as e:
-            self.logger.warning("GET %s: %s", url, str(e))
+        request_headers = headers or self.headers
+        response = self._request_with_retries(
+            self.web.get,
+            url,
+            log_action="GET",
+            headers=request_headers,
+        )
+        if not response:
             return None
+
+        self.post_process(response)
+        if 'data-bot-protect="forced"' in response.text:
+            self.logger.warning("Bot protection hit! cannot continue")
+            self.reporter.report(
+                0, "TWB_RECAPTCHA", "Stopping bot, press any key once captcha has been solved")
+            Notification.send("Bot protection hit! cannot continue")
+            input("Press any key...")
+            return self.get_url(url, headers)
+        return response
 
     def post_url(self, url, data, headers=None):
         """
         Sends a basic POST request with urlencoded postdata
         """
-        if not self.priority_mode:
-            time.sleep(
-                random.randint(int(3 * self.delay), int(7 * self.delay))
-            )
         self.headers['Origin'] = (self.endpoint if self.endpoint else self.auth_endpoint).rstrip('/')
+        self._sleep_human_delay()
         url = urljoin(self.endpoint if self.endpoint else self.auth_endpoint, url)
         enc = urlencode(data)
-        if not headers:
-            headers = self.headers
-        try:
-            res = self.web.post(url=url, data=data, headers=headers)
-            self.logger.debug("POST %s %s [%d]", url, enc, res.status_code)
-            self.post_process(res)
-            return res
-        except Exception as e:
-            self.logger.warning("POST %s %s: %s", url, enc, str(e))
+        request_headers = headers or self.headers
+        response = self._request_with_retries(
+            self.web.post,
+            url,
+            log_action="POST",
+            headers=request_headers,
+            data=data,
+            log_payload=enc,
+        )
+        if not response:
             return None
+        self.post_process(response)
+        return response
+
+    def _sleep_human_delay(self):
+        if self.priority_mode:
+            return
+        lower = max(0, int(3 * self.delay))
+        upper = max(lower, int(7 * self.delay))
+        if upper <= 0:
+            return
+        time.sleep(random.randint(lower, upper))
+
+    def _retry_sleep(self, attempt_index):
+        backoff_multiplier = self.retry_backoff ** max(0, attempt_index - 1)
+        jitter = random.uniform(0.5, 1.5)
+        base_delay = self.delay if self.delay > 0 else 1
+        return max(0.5, jitter * backoff_multiplier * base_delay)
+
+    def _normalize_timeout(self, timeout):
+        if timeout is None:
+            return (5, 30)
+        if isinstance(timeout, (int, float)):
+            value = float(timeout)
+            return (value, value)
+        if isinstance(timeout, (list, tuple)) and len(timeout) == 2:
+            try:
+                return (float(timeout[0]), float(timeout[1]))
+            except (TypeError, ValueError):
+                return (5, 30)
+        return (5, 30)
+
+    def _request_with_retries(self, method, url, *, log_action, log_payload=None, **kwargs):
+        last_exception = None
+        for attempt in range(1, self.max_retries + 1):
+            try:
+                response = method(url=url, timeout=self.request_timeout, **kwargs)
+                if log_payload:
+                    self.logger.debug("%s %s %s [%d]", log_action, url, log_payload, response.status_code)
+                else:
+                    self.logger.debug("%s %s [%d]", log_action, url, response.status_code)
+                return response
+            except requests.RequestException as exc:
+                last_exception = exc
+                self.logger.warning(
+                    "%s %s attempt %d/%d failed: %s",
+                    log_action,
+                    url,
+                    attempt,
+                    self.max_retries,
+                    exc,
+                )
+            except Exception as exc:  # pragma: no cover - safeguard for unexpected errors
+                last_exception = exc
+                self.logger.warning(
+                    "%s %s attempt %d/%d failed: %s",
+                    log_action,
+                    url,
+                    attempt,
+                    self.max_retries,
+                    exc,
+                )
+            if attempt < self.max_retries:
+                time.sleep(self._retry_sleep(attempt))
+        if last_exception:
+            self.logger.error(
+                "%s %s failed after %d attempts: %s",
+                log_action,
+                url,
+                self.max_retries,
+                last_exception,
+            )
+        return None
 
     def start(self, ):
         """

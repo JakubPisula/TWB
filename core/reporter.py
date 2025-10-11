@@ -158,7 +158,7 @@ class MySQLReporter(RemoteReporter):
             con.close()
             return True
         except Exception as e:
-            print(f"MYSQL ERROR: {e}")
+            logging.getLogger("RemoteLogger").error("MYSQL ERROR: %s", e)
             return False
 
 

@@ -1,5 +1,8 @@
 ### Unreleased
 - Added configurable Farm-Beutelimit-Schutz – der Farm-Manager stoppt Farm- und Scout-Läufe automatisch, sobald das Weltlimit erreicht ist (inkl. Margin/Overrides).
+- Hardened Forced-Peace-Handling und Village-Initialisierung, damit Läufe bei fehlenden Spieldaten sauber abbrechen und Peace-Zeiten zuverlässig greifen.
+- WebWrapper mit konfigurierbaren Timeouts & Retries ausgestattet und externe Abfragen (Updater, TWStats) mit HTTP-Timeouts versehen.
+- Konsole auf konsistente Logger-Ausgaben umgestellt (statt `print`) und neue Tests für Extractors, Forced-Peace sowie WebWrapper-Retries ergänzt.
 
 ### New in 1.6
 - Bugfixes

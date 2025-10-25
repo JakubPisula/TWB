@@ -8,6 +8,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Optional, Tuple
 
+from core.exceptions import InvalidJSONException
 from core.extractors import Extractor
 from core.filemanager import FileManager
 
@@ -481,7 +482,15 @@ class ResourceCoordinator:
     # Ledger management
     # ------------------------------------------------------------------
     def _load_ledger(self) -> None:
-        data = FileManager.load_json_file(self.ledger_path)
+        try:
+            data = FileManager.load_json_file(self.ledger_path)
+        except InvalidJSONException:
+            self.logger.warning(
+                "Ledger file %s contained invalid JSON; resetting", self.ledger_path
+            )
+            self.ledger = {}
+            FileManager.save_json_file(self.ledger, self.ledger_path)
+            return
         if not data:
             self.ledger = {}
             return

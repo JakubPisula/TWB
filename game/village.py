@@ -695,7 +695,7 @@ class Village:
             "resources": self.resman.actual,
             "required_resources": self.resman.requested,
             "available_troops": self.units.troops,
-            "buidling_levels": self.builder.levels,
+            "building_levels": self.builder.levels,
             "building_queue": self.builder.queue,
             "troops": self.units.total_troops,
             "under_attack": self.def_man.under_attack,

@@ -201,7 +201,7 @@ class ResourceCoordinator:
 
             name = cache_entry.get("name") or f"Village {village_id}"
             coords = _parse_coords(name)
-            building_levels = cache_entry.get("buidling_levels") or {}
+            building_levels = cache_entry.get("building_levels") or {}
             market_level = _parse_int(building_levels.get("market", 0))
 
             village_cfg = config_villages.get(village_id) or {}

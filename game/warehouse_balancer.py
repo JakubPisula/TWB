@@ -140,7 +140,14 @@ class ResourceCoordinator:
         merged.update(self.config.get("balancer", {}))
 
         merged["enabled"] = bool(merged.get("enabled"))
-        merged["mode"] = str(merged.get("mode", "requests_only"))
+        mode = str(merged.get("mode", "requests_only"))
+        allowed_modes = {"requests_only", "balance_even"}
+        if mode not in allowed_modes:
+            self.logger.warning(
+                "Unknown balancer mode '%s'; falling back to 'requests_only'", mode
+            )
+            mode = "requests_only"
+        merged["mode"] = mode
         merged["needs_more_pct"] = float(merged.get("needs_more_pct", 0.85))
         merged["built_out_pct"] = float(merged.get("built_out_pct", 0.25))
         merged["max_shipments_per_run"] = max(0, _parse_int(merged.get("max_shipments_per_run")))

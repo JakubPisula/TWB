@@ -133,7 +133,7 @@ class AttackManager:
                     "TWB_FARM",
                     "Attacking %s -> %s (%s)"
                     % (self.village_id, target["id"], str(template)),
-                )
+                    )
                 if attack_result:
                     for u in template:
                         self.troopmanager.troops[u] = str(
@@ -173,30 +173,34 @@ class AttackManager:
             if self.village_id in self.map.villages
             else None
         )
+
+        # --- LOGGING IMPROVEMENT: Consolidate ignore messages ---
+        ignored_reasons = {
+            "player_owned": 0,
+            "max_points": 0,
+            "min_points": 0,
+            "higher_points": 0,
+            "unknown_ignored": 0,
+            "night_bonus": 0,
+            "too_far": 0,
+        }
+
         for vid in self.map.villages:
             village = self.map.villages[vid]
             if village["owner"] != "0" and vid not in self.extra_farm:
                 if vid not in self.ignored:
-                    self.logger.debug(
-                        "Ignoring village %s because player owned, add to additional_farms to auto attack", vid
-                    )
+                    ignored_reasons["player_owned"] += 1
                     self.ignored.append(vid)
                 continue
             if my_village and "points" in my_village and "points" in village:
                 if village["points"] >= self.farm_maxpoints:
                     if vid not in self.ignored:
-                        self.logger.debug(
-                            "Ignoring village %s because points %d exceeds limit %d",
-                            vid, village["points"], self.farm_maxpoints
-                        )
+                        ignored_reasons["max_points"] += 1
                         self.ignored.append(vid)
                     continue
                 if village["points"] <= self.farm_minpoints:
                     if vid not in self.ignored:
-                        self.logger.debug(
-                            "Ignoring village %s because points %d below limit %d",
-                            vid, village["points"], self.farm_minpoints
-                        )
+                        ignored_reasons["min_points"] += 1
                         self.ignored.append(vid)
                     continue
                 if (
@@ -204,28 +208,21 @@ class AttackManager:
                         and not self.target_high_points
                 ):
                     if vid not in self.ignored:
-                        self.logger.debug(
-                            "Ignoring village %s because of higher points %d -> %d",
-                            vid, my_village["points"], village["points"]
-                        )
+                        ignored_reasons["higher_points"] += 1
                         self.ignored.append(vid)
                     continue
                 if vid in self._unknown_ignored:
+                    ignored_reasons["unknown_ignored"] += 1
                     continue
             if village["owner"] != "0":
                 get_h = time.localtime().tm_hour
                 if get_h in range(0, 8) or get_h == 23:
-                    self.logger.debug(
-                        "Village %s will be ignored because it is player owned and attack between 23h-8h", vid
-                    )
+                    ignored_reasons["night_bonus"] += 1
                     continue
             distance = self.map.get_dist(village["location"])
             if distance > self.farm_radius:
                 if vid not in self.ignored:
-                    self.logger.debug(
-                        "Village %s will be ignored because it is too far away: distance is %f, max is %d",
-                        vid, distance, self.farm_radius
-                    )
+                    ignored_reasons["too_far"] += 1
                     self.ignored.append(vid)
                 continue
             if vid in self.ignored:
@@ -233,9 +230,18 @@ class AttackManager:
                 self.ignored.remove(vid)
 
             output.append([village, distance])
+
+        # --- LOGGING IMPROVEMENT: Log summary instead of spam ---
+        ignored_count = len(self.ignored)
+        ignored_details = ", ".join(f"{reason}: {count}" for reason, count in ignored_reasons.items() if count > 0)
         self.logger.info(
-            "Farm targets: %d Ignored targets: %d", len(output), len(self.ignored)
+            "Farm targets: %d. Ignored targets: %d (%s)",
+            len(output),
+            ignored_count,
+            ignored_details if ignored_details else "none"
         )
+        # --- END LOGGING IMPROVEMENT ---
+
         self.targets = sorted(output, key=lambda x: x[1])
 
     def attacked(self, vid, scout=False, high_profile=False, safe=True, low_profile=False):

@@ -9,7 +9,7 @@ TWB - an open source Tribal Wars bot
 # it under the terms of the GNU General Public License as published by
 # the Free Software Foundation, version 3.
 #
-# This program is distributed in the hope that it will be useful, but
+# This program is distributed in the hope that it is useful, but
 # WITHOUT ANY WARRANTY; without even the implied warranty of
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
 # General Public License for more details.
@@ -42,10 +42,19 @@ from pages.overview import OverviewPage
 from core.exceptions import UnsupportedPythonVersion
 from core.extractors import Extractor
 
+# --- LOGGING IMPROVEMENT ---
+# Set default log level to DEBUG. Use -v for DEBUG, -q for WARNING.
+log_level = logging.DEBUG
+if "-v" in sys.argv or "--verbose" in sys.argv:
+    log_level = logging.DEBUG
+elif "-q" in sys.argv or "--quiet" in sys.argv:
+    log_level = logging.WARNING
+
 coloredlogs.install(
-    level=logging.DEBUG if "-q" not in sys.argv else logging.INFO,
+    level=log_level,
     fmt="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
+# --- END LOGGING IMPROVEMENT ---
 
 logging.getLogger("requests").setLevel(logging.WARNING)
 logging.getLogger("urllib3").setLevel(logging.WARNING)
@@ -78,6 +87,10 @@ class TWB:
         self.should_run = True
         self.runs = 0
         self.found_villages = []
+        # --- PERFORMANCE (POINT 4) ---
+        self.config_data = None
+        self.config_mtime = 0
+        # --- END PERFORMANCE ---
 
     @staticmethod
     def internet_online():
@@ -162,31 +175,45 @@ class TWB:
         Fetches the config file
         Or the example one of it doesn't exist
         Also updates config file with template data in case of an update
+        --- PERFORMANCE (POINT 4) ---
+        Caches config in memory and only reloads if file is modified.
         """
-        template = FileManager.load_json_file("config.example.json")
+        config_path = "config.json"
+        config_example_path = "config.example.json"
 
-        if not FileManager.path_exists("config.json"):
+        try:
+            current_mtime = os.path.getmtime(config_path)
+        except OSError:
+            # Config.json doesn't exist, run manual config
             if self.manual_config():
-                return self.config()
-
+                return self.config()  # Retry loading
             print("No config file found. Exiting")
             sys.exit(1)
 
-        config = FileManager.load_json_file("config.json", object_pairs_hook=collections.OrderedDict)
+        # Check if cache is invalid (file modified or not loaded)
+        if not self.config_data or current_mtime > self.config_mtime:
+            logging.debug("Config cache invalidated. Reloading config.json...")
+            self.config_mtime = current_mtime
 
-        if template and config["build"]["version"] != template["build"]["version"]:
-            print(
-                "Outdated config file found, merging (old copy saved as config.bak)\n"
-                "Remove config.example.json to disable this behavior"
-            )
-            FileManager.copy_file("config.json", "config.bak")
+            template = FileManager.load_json_file(config_example_path)
+            config = FileManager.load_json_file(config_path, object_pairs_hook=collections.OrderedDict)
 
-            config = self.merge_configs(config, template)
-            FileManager.save_json_file(config, "config.json")
+            if template and config["build"]["version"] != template["build"]["version"]:
+                print(
+                    "Outdated config file found, merging (old copy saved as config.bak)\n"
+                    "Remove config.example.json to disable this behavior"
+                )
+                FileManager.copy_file(config_path, "config.bak")
 
-            print("Deployed new configuration file")
+                config = self.merge_configs(config, template)
+                FileManager.save_json_file(config, config_path)
+                print("Deployed new configuration file")
 
-        return config
+            self.config_data = config
+
+        # Return a copy to prevent mutation of the cached config
+        return copy.deepcopy(self.config_data)
+        # --- END PERFORMANCE ---
 
     @staticmethod
     def merge_configs(old_config, new_config):
@@ -265,6 +292,10 @@ class TWB:
 
         FileManager.save_json_file(original, "config.json")
         print("Deployed new configuration file")
+        # --- PERFORMANCE (POINT 4) ---
+        # Invalidate config cache after manual edit
+        self.config_data = None
+        # --- END PERFORMANCE ---
         return original
 
     @staticmethod
@@ -369,13 +400,20 @@ class TWB:
                 )
                 time.sleep(sleep)
             else:
+                # --- PERFORMANCE (POINT 4) ---
+                # Get cached config
                 config = self.config()
+                # --- END PERFORMANCE ---
                 overview_page, config = self.get_overview(config)
                 has_changed, new_cf = self.get_world_options(overview_page, config)
                 if has_changed:
                     print("Updated world options")
                     config = self.merge_configs(config, new_cf)
                     FileManager.save_json_file(config, "config.json")
+                    # --- PERFORMANCE (POINT 4) ---
+                    # Invalidate config cache after manual edit
+                    self.config_data = None
+                    # --- END PERFORMANCE ---
                     print("Deployed new configuration file")
                 village_number = 1
                 logger = logging.getLogger("TWB")
@@ -515,3 +553,4 @@ if __name__ == "__main__":
             sys.exit(1)
         sys.exit(0)
     main()
+

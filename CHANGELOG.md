@@ -16,6 +16,23 @@
   - Problem behoben bei dem 1-Dorf-Accounts ignoriert wurden wegen Server-Redirect
   - **Ergebnis**: Bot funktioniert jetzt korrekt mit Single- und Multi-Dorf-Accounts unabhängig davon welche Seite der Server zurückgibt
 - Added configurable Farm-Beutelimit-Schutz – der Farm-Manager stoppt Farm- und Scout-Läufe automatisch, sobald das Weltlimit erreicht ist (inkl. Margin/Overrides).
+- **Automatisches Freischalten von Ressourcen-Sammel-Optionen**: Der Bot schaltet jetzt automatisch höhere Sammel-Slots (2, 3, 4) frei, wenn genügend Ressourcen verfügbar sind
+  - Prüft Ressourcenverfügbarkeit vor dem Freischalten
+  - Fordert fehlende Ressourcen vom Balancer an, falls aktiviert
+  - Aktualisiert Spielstatus automatisch nach erfolgreichem Freischalten
+  - Verwendet neue Sammel-Slots sofort nach dem Freischalten
+- **Konfigurierbare Sammel-/Farm-Priorität**: Neuer Parameter `prioritize_gathering` im Village-Template
+  - Standard (false): Farm-Läufe werden vor Sammel-Operationen ausgeführt
+  - Aktiviert (true): Sammel-Operationen haben Vorrang vor Farming
+  - Ermöglicht bessere Ressourcen-Management-Strategien pro Dorf
+- **Sammel-Optimierung**: Truppen-Status wird nach Sammel-Operationen persistiert
+  - Verhindert unnötige API-Aufrufe
+  - Verbessert Koordination zwischen Farming und Gathering
+  - Reduziert Server-Last und erhöht Effizienz
+- **Defence-Flag-Bugfix**: Behebt Endlosschleife beim Setzen von Verteidigungs-Flaggen
+  - Interner State wird jetzt manuell aktualisiert nach Flag-Änderung
+  - Verhindert wiederholte Flag-Set-Versuche für bereits gesetzte Flags
+- Code-Formatierung und Einrückung in mehreren Dateien verbessert
 
 ### New in 1.6
 - Bugfixes

@@ -4,7 +4,6 @@ import os
 import sys
 
 from game.attack import AttackCache
-from game.reports import ReportCache
 from game.warehouse_balancer import ResourceCoordinator
 
 
@@ -18,84 +17,52 @@ class VillageManager:
         if verbose:
             logger.info("Villages: %d", len(config["villages"]))
         attacks = AttackCache.cache_grab()
-        reports = ReportCache.cache_grab()
+        # --- PERFORMANCE (POINT 3) ---
+        # Report reading is no longer needed, stats are in AttackCache
+        # reports = ReportCache.cache_grab()
 
-        if verbose:
-            logger.info("Reports: %d", len(reports))
-            logger.info("Farms: %d", len(attacks))
+        # if verbose:
+        #     logger.info("Reports: %d", len(reports))
+        # --- END PERFORMANCE ---
+
+        logger.info("Farms: %d", len(attacks))
+
         t = {"wood": 0, "iron": 0, "stone": 0}
+
         for farm in attacks:
             data = attacks[farm]
 
-            num_attack = []
-            loot = {"wood": 0, "iron": 0, "stone": 0}
-            total_loss_count = 0
-            total_sent_count = 0
-            for rep in reports:
-                if reports[rep]["dest"] == farm and reports[rep]["type"] == "attack":
-                    for unit in reports[rep]["extra"]["units_sent"]:
-                        total_sent_count += reports[rep]["extra"]["units_sent"][unit]
-                    for unit in reports[rep]["extra"]["units_losses"]:
-                        total_loss_count += reports[rep]["extra"]["units_losses"][unit]
-                    try:
-                        res = reports[rep]["extra"]["loot"]
-                        for r in res:
-                            loot[r] = loot[r] + int(res[r])
-                            t[r] = t[r] + int(res[r])
-                        num_attack.append(reports[rep])
-                    except (KeyError, ValueError, TypeError) as e:
-                        logger.debug("Skipping report %s: %s", rep, e)
-                        pass
-            percentage_lost = 0
+            # --- PERFORMANCE (POINT 3) ---
+            # Read pre-calculated stats directly from the cache entry
+            loot = data.get("total_loot", {"wood": 0, "iron": 0, "stone": 0})
+            num_attack = data.get("attack_count", 0)
+            total_loss_count = data.get("total_losses", 0)
+            total_sent_count = data.get("total_sent", 0)
 
+            for r in loot:
+                t[r] = t[r] + int(loot[r])
+
+            percentage_lost = 0
             if total_sent_count > 0:
                 percentage_lost = total_loss_count / total_sent_count * 100
+            # --- END PERFORMANCE ---
 
             perf = ""
-            if data["high_profile"]:
+            if data.get("high_profile"):
                 perf = "High Profile "
-            if "low_profile" in data and data["low_profile"]:
+            if data.get("low_profile"):
                 perf = "Low Profile "
+
             if verbose:
                 logger.info(
                     "%sFarm village %s attacked %d times - Total loot: %s - Total units lost: %d (%.2f)",
-                    perf, farm, len(num_attack), str(loot), total_loss_count, percentage_lost
+                    perf, farm, num_attack, str(loot), total_loss_count, percentage_lost
                 )
-            if len(num_attack):
-                total = 0
-                for k in loot:
-                    total += loot[k]
-                if len(num_attack) > 3:
-                    if total / len(num_attack) < 100 and (
-                            "low_profile" not in data or not data["low_profile"]
-                    ):
-                        if verbose:
-                            logger.info(
-                                "Farm %s has very low resources (%d avg total), extending farm time",
-                                farm, total / len(num_attack)
-                            )
-                        data["low_profile"] = True
-                        AttackCache.set_cache(farm, data)
-                    elif total / len(num_attack) > 500 and (
-                            "high_profile" not in data or not data["high_profile"]
-                    ):
-                        if verbose:
-                            logger.info(
-                                "Farm %s has very high resources (%d avg total), setting to high profile",
-                                farm, total / len(num_attack)
-                            )
-                        data["high_profile"] = True
-                        AttackCache.set_cache(farm, data)
 
-            if percentage_lost > 20 and not data["low_profile"]:
-                logger.warning(f"Dangerous {percentage_lost} percentage lost units! Extending farm time")
-                data["low_profile"] = True
-                data["high_profile"] = False
-                AttackCache.set_cache(farm, data)
-            if percentage_lost > 50 and len(num_attack) > 10:
-                logger.critical("Farm seems too dangerous/ unprofitable to farm. Setting safe to false!")
-                data["safe"] = False
-                AttackCache.set_cache(farm, data)
+            # --- PERFORMANCE (POINT 3) ---
+            # All profiling logic has been moved to ReportManager.attack_report
+            # This function is now read-only.
+            # --- END PERFORMANCE ---
 
         if verbose:
             logger.info("Total loot: %s" % t)

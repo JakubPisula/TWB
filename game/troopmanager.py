@@ -36,7 +36,6 @@ class TroopManager:
     game_data = {}
     logger = None
     max_batch_size = 50
-    wait_for = {}
 
     _waits = {}
 
@@ -69,20 +68,22 @@ class TroopManager:
         """
         self.wrapper = wrapper
         self.village_id = village_id
+        self.wait_for = {}
         self.wait_for[village_id] = {"barracks": 0, "stable": 0, "garage": 0}
         if not self.resman:
             self.resman = ResourceManager(
                 wrapper=self.wrapper, village_id=self.village_id
             )
 
-    def update_totals(self):
+    # --- PERFORMANCE (POINT 2) ---
+    def update_totals(self, overview_game_data, overview_html):
         """
         Updates the total amount of recruited units
+        Uses cached game_data and overview_html from Village.run
         """
-        main_data = self.wrapper.get_action(
-            action="overview", village_id=self.village_id
-        )
-        self.game_data = Extractor.game_state(main_data)
+        # Use cached game_data
+        self.game_data = overview_game_data
+        # --- END PERFORMANCE ---
 
         if self.resman:
             if "research" in self.resman.requested:
@@ -94,14 +95,24 @@ class TroopManager:
             self.logger = logging.getLogger(f"Recruitment: {village_name}")
         self.troops = {}
 
-        get_all = (
-                f"game.php?village={self.village_id}&screen=place&mode=units&display=units"
-        )
-        result_all = self.wrapper.get_url(get_all)
-
-        for u in Extractor.units_in_village(result_all):
+        # --- PERFORMANCE (POINT 2) ---
+        # Try to extract units from cached overview_html first
+        extracted_units = Extractor.units_in_village(overview_html)
+        self.logger.debug(f"Extractor.units_in_village from overview_html returned: {extracted_units}")
+        
+        # If overview_html doesn't contain units (units_home table), fetch from place screen
+        if not extracted_units:
+            self.logger.debug("No units found in overview_html, fetching from place screen")
+            place_url = f"game.php?village={self.village_id}&screen=place&mode=units"
+            place_data = self.wrapper.get_url(url=place_url)
+            if place_data:
+                extracted_units = Extractor.units_in_village(place_data.text)
+                self.logger.debug(f"Extractor.units_in_village from place screen returned: {extracted_units}")
+        
+        for u in extracted_units:
             k, v = u
             self.troops[k] = v
+        # --- END PERFORMANCE ---
 
         self.logger.debug("Units in village: %s", str(self.troops))
 
@@ -109,18 +120,24 @@ class TroopManager:
             return
 
         self.total_troops = {}
-        for u in Extractor.units_in_total(result_all):
+        # --- PERFORMANCE (POINT 2) ---
+        # Use cached overview_html to extract total units
+        for u in Extractor.units_in_total(overview_html):
             k, v = u
             if k in self.total_troops:
                 self.total_troops[k] = self.total_troops[k] + int(v)
             else:
                 self.total_troops[k] = int(v)
+        # --- END PERFORMANCE ---
         self.logger.debug("Village units total: %s", str(self.total_troops))
 
-    def start_update(self, building="barracks", disabled_units=[]):
+
+    def start_update(self, building="barracks", disabled_units=None):
         """
         Starts the unit update for a building
         """
+        if disabled_units is None:
+            disabled_units = []
         if self.wait_for[self.village_id][building] > time.time():
             human_ts = self.readable_ts(self.wait_for[self.village_id][building])
             self.logger.info(
@@ -133,25 +150,48 @@ class TroopManager:
         if self.randomize_unit_queue:
             random.shuffle(run_selection)
 
+        # Track if we've already failed due to insufficient resources
+        resource_check_failed = False
+
         for wanted in run_selection:
             # Ignore disabled units
             if wanted in disabled_units:
                 continue
 
+            # Skip if we already know resources are insufficient
+            if resource_check_failed:
+                self.logger.debug(
+                    "Skipping %s recruitment attempt - insufficient resources detected earlier",
+                    wanted
+                )
+                continue
+
             if wanted not in self.total_troops:
-                if self.recruit(
-                        wanted, self.wanted[building][wanted], building=building
-                ):
+                result = self.recruit(
+                    wanted, self.wanted[building][wanted], building=building
+                )
+                if result:
                     return True
+                # Check if failure was due to resources by looking at recruit_data
+                if self.recruit_data and wanted in self.recruit_data:
+                    get_min = self.get_min_possible(self.recruit_data[wanted])
+                    if get_min == 0:
+                        resource_check_failed = True
                 continue
 
             if self.wanted[building][wanted] > self.total_troops[wanted]:
-                if self.recruit(
-                        wanted,
-                        self.wanted[building][wanted] - self.total_troops[wanted],
-                        building=building,
-                ):
+                result = self.recruit(
+                    wanted,
+                    self.wanted[building][wanted] - self.total_troops[wanted],
+                    building=building,
+                    )
+                if result:
                     return True
+                # Check if failure was due to resources by looking at recruit_data
+                if self.recruit_data and wanted in self.recruit_data:
+                    get_min = self.get_min_possible(self.recruit_data[wanted])
+                    if get_min == 0:
+                        resource_check_failed = True
 
         self.logger.info("Recruitment:%s up-to-date", building)
         return False
@@ -243,9 +283,6 @@ class TroopManager:
                     and data["can_research"]
             ):
                 if "research_error" in data and data["research_error"]:
-                    self.logger.debug(
-                        "Skipping research of %s because of research error", unit_type
-                    )
                     # Add needed resources to res manager?
                     r = True
                     if data["wood"] > self.game_data["village"]["wood"]:
@@ -261,7 +298,12 @@ class TroopManager:
                         self.resman.request(source="research", resource="iron", amount=req)
                         r = False
                     if not r:
+                        self.logger.debug("Skipping research of %s because of research error (not enough resources)", unit_type)
                         self.logger.debug("Research needs resources")
+                    else:
+                        self.logger.debug(
+                            "Skipping research of %s because of research error", unit_type
+                        )
                     continue
                 if "error_buildings" in data and data["error_buildings"]:
                     self.logger.debug(
@@ -280,7 +322,7 @@ class TroopManager:
                         "TWB_UPGRADE",
                         "Started smith upgrade of %s %d -> %d"
                         % (unit_type, current_level, current_level + 1),
-                    )
+                        )
                     return True
         return False
 
@@ -296,9 +338,6 @@ class TroopManager:
         data = smith_data["available"][unit_type]
         if "can_research" in data and data["can_research"]:
             if "research_error" in data and data["research_error"]:
-                self.logger.debug(
-                    "Ignoring research of %s because of resource error %s", unit_type, str(data["research_error"])
-                )
                 # Add needed resources to res manager?
                 r = True
                 if data["wood"] > self.game_data["village"]["wood"]:
@@ -314,7 +353,14 @@ class TroopManager:
                     self.resman.request(source="research", resource="iron", amount=req)
                     r = False
                 if not r:
+                    self.logger.debug(
+                        "Ignoring research of %s because of resource error (not enough resources) %s", unit_type, str(data["research_error"])
+                    )
                     self.logger.debug("Research needs resources")
+                else:
+                    self.logger.debug(
+                        "Ignoring research of %s because of research error %s", unit_type, str(data["research_error"])
+                    )
                 return False
             if "error_buildings" in data and data["error_buildings"]:
                 self.logger.debug(
@@ -348,31 +394,101 @@ class TroopManager:
                 return True
         self.logger.info("Research of %s not yet possible", unit_type)
 
-    def gather(self, selection=1, disabled_units=[], advanced_gather=True):
+    def _unlock_gather_options(self, village_data):
+        """
+        Checks for locked gather options and unlocks them if resources are available.
+        """
+        if not village_data or 'options' not in village_data:
+            return False
+
+        unlocked_something = False
+        for option_id in sorted(village_data['options'].keys()):
+            option = village_data['options'][option_id]
+
+            # Check if it's locked and has unlock costs specified
+            if option.get('is_locked') and option.get('unlock_costs'):
+                costs = option['unlock_costs']
+                can_afford = True
+
+                # Check if we have enough resources (using self.game_data from update_totals)
+                if not self.game_data:
+                    self.logger.warning("Cannot check unlock costs, game_data is missing.")
+                    return False # Wait for next cycle
+
+                for resource, cost in costs.items():
+                    if self.game_data['village'].get(resource, 0) < cost:
+                        can_afford = False
+                        self.logger.debug(f"Cannot unlock gather option {option_id}: Need {cost} {resource}, have {self.game_data['village'].get(resource, 0)}")
+                        # Optionally request resources
+                        if self.resman:
+                            req = cost - self.game_data['village'].get(resource, 0)
+                            self.resman.request(source=f"gather_unlock_{option_id}", resource=resource, amount=req)
+                        break
+
+                if can_afford:
+                    self.logger.info(f"Attempting to unlock gather option {option_id}...")
+                    payload = {
+                        "option_id": option_id,
+                        "h": self.wrapper.last_h,
+                    }
+                    # Send API request to unlock
+                    api_result = self.wrapper.get_api_action(
+                        action="unlock_option",
+                        params={"screen": "scavenge_api"},
+                        data=payload,
+                        village_id=self.village_id,
+                    )
+
+                    if api_result and api_result.get("success"):
+                        self.logger.info(f"Successfully unlocked gather option {option_id}!")
+                        unlocked_something = True
+                        # Update game_data to reflect spent resources
+                        if 'game_data' in api_result:
+                            self.game_data = api_result['game_data']
+                            if self.resman:
+                                self.resman.update(self.game_data)
+                        else:
+                            # Manually subtract costs as a fallback
+                            for resource, cost in costs.items():
+                                self.game_data['village'][resource] -= cost
+                    else:
+                        self.logger.warning(f"Failed to unlock gather option {option_id}. Result: {api_result}")
+
+        return unlocked_something
+
+    def gather(self, selection=1, disabled_units=None, advanced_gather=True):
         """
         Used for the gather resources functionality where it uses two options:
         - Basic: all troops gather on the selected gather level
         - Advanced: troops are split
         """
+        if disabled_units is None:
+            disabled_units = []
         if not self.can_gather:
             return False
         url = f"game.php?village={self.village_id}&screen=place&mode=scavenge"
         result = self.wrapper.get_url(url=url)
         village_data = Extractor.village_data(result)
 
+        # --- NEW: Attempt to unlock gather options ---
+        if self._unlock_gather_options(village_data):
+            # If we unlocked something, refetch the page to get the new state
+            self.logger.info("Refetching gather page after unlocking new option.")
+            result = self.wrapper.get_url(url=url)
+            village_data = Extractor.village_data(result)
+        # --- END NEW ---
+
         sleep = 0
         available_selection = 0
 
-        self.troops = {}
-
-        get_all = f"game.php?village={self.village_id}&screen=place&mode=units&display=units"
-        result_all = self.wrapper.get_url(get_all)
-
-        for u in Extractor.units_in_village(result_all):
-            k, v = u
-            self.troops[k] = v
+        # --- PERFORMANCE (POINT 2) ---
+        # self.troops is already populated by update_totals()
+        # Remove redundant request to screen=place&mode=units
+        # --- END PERFORMANCE ---
 
         troops = dict(self.troops)
+        self.logger.info(f"Starting gather with self.troops: {self.troops}")
+        self.logger.info(f"Local troops copy: {troops}")
 
         haul_dict = [
             "spear:25",
@@ -384,34 +500,35 @@ class TroopManager:
         if "archer" in self.total_troops:
             haul_dict.extend(["archer:10", "marcher:50"])
 
-        # ADVANCED GATHER: Goes from gather_selection to 1, trying the same time (approximately) for every gather. Active hours exclude LC and Axes, at night everything is used for gather (except Paladin)
+        # ADVANCED GATHER: Prioritize highest gathering operations by assigning maximum troops to them first
 
         if advanced_gather:
-            selection_map = [15, 21, 24,
-                             26]  # Divider in order to split the total carrying capacity of the troops into pieces that can fit into pretty much the same time frame
-
-            batch_multiplier = [15, 6, 3,
-                                2]  # Multiplier for equal distribution of troops. Time(gather1) = Time(gather2) if gather2 = 2.5 * gather1
-
             troops = {key: int(value) for key, value in troops.items()}
+            self.logger.info(f"Troops after int conversion: {troops}")
+            
+            # Calculate total carry capacity for logging
             total_carry = 0
             for item in haul_dict:
                 item, carry = item.split(":")
                 if item == "knight":
                     continue
                 if item in disabled_units:
+                    self.logger.debug(f"Skipping {item} - in disabled_units")
                     continue
                 if item in troops and int(troops[item]) > 0:
-                    total_carry += int(carry) * int(troops[item])
+                    carry_contribution = int(carry) * int(troops[item])
+                    total_carry += carry_contribution
+                    self.logger.debug(f"Unit {item}: {troops[item]} units * {carry} carry = {carry_contribution} total carry")
                 else:
-                    pass
-            gather_batch = math.floor(total_carry / selection_map[selection - 1])
+                    self.logger.debug(f"Unit {item}: not in troops or count is 0")
+            self.logger.info(f"Total carry capacity: {total_carry}")
 
+            # Iterate from highest to lowest operation and assign ALL available troops to each
             for option in list(reversed(sorted(village_data['options'].keys())))[4 - selection:]:
                 self.logger.debug(
                     f"Option: {option} Locked? {village_data['options'][option]['is_locked']} Is underway? {village_data['options'][option]['scavenging_squad'] != None}")
-                if int(option) <= selection and not village_data['options'][option]['is_locked'] and not \
-                village_data['options'][option]['scavenging_squad'] != None:
+                if int(option) <= selection and not village_data['options'][option]['is_locked'] and \
+                        village_data['options'][option]['scavenging_squad'] == None:
                     available_selection = int(option)
                     self.logger.info(f"Gather operation {available_selection} is ready to start.")
 
@@ -421,12 +538,10 @@ class TroopManager:
                         "squad_requests[0][use_premium]": "false",
                     }
 
-                    curr_haul = gather_batch * batch_multiplier[available_selection - 1]
-                    temp_haul = curr_haul
-
-                    self.logger.debug(
-                        f"Current Haul: {curr_haul} = Gather Batch ({gather_batch}) * Batch Multiplier {available_selection} ({batch_multiplier[available_selection - 1]})")
-
+                    # Assign ALL available troops to this operation (highest priority)
+                    total_carry_for_operation = 0
+                    troops_assigned = False
+                    
                     for item in haul_dict:
                         item, carry = item.split(":")
                         if item == "knight":
@@ -435,41 +550,59 @@ class TroopManager:
                             continue
 
                         if item in troops and int(troops[item]) > 0:
-                            troops_int = int(troops[item])
-                            troops_selected = 0
-                            for troop in range(troops_int):
-                                if (temp_haul - int(carry) < 0):
-                                    break
-                                else:
-                                    troops_selected += 1
-                                    temp_haul -= int(carry)
-                            troops_int -= troops_selected
-                            troops[item] = str(troops_int)
-                            payload["squad_requests[0][candidate_squad][unit_counts][%s]" % item] = str(troops_selected)
+                            troops_count = int(troops[item])
+                            # Assign all troops of this type to the current operation
+                            payload["squad_requests[0][candidate_squad][unit_counts][%s]" % item] = str(troops_count)
+                            total_carry_for_operation += int(carry) * troops_count
+                            self.logger.debug(f"Assigned {troops_count} {item} to gather operation {available_selection}")
+                            # Remove these troops from the pool
+                            troops[item] = 0
+                            if troops_count > 0:
+                                troops_assigned = True
                         else:
                             payload["squad_requests[0][candidate_squad][unit_counts][%s]" % item] = "0"
-                    payload["squad_requests[0][candidate_squad][carry_max]"] = str(curr_haul)
+                    
+                    payload["squad_requests[0][candidate_squad][carry_max]"] = str(total_carry_for_operation)
+                    
+                    if not troops_assigned:
+                        self.logger.info(f"No troops available for gather operation {available_selection}, skipping.")
+                        continue
+                    
+                    self.logger.info(f"Sending gather operation {available_selection} with payload: {payload}")
                     payload["h"] = self.wrapper.last_h
-                    self.wrapper.get_api_action(
+                    api_result = self.wrapper.get_api_action(
                         action="send_squads",
                         params={"screen": "scavenge_api"},
                         data=payload,
                         village_id=self.village_id,
                     )
+                    self.logger.info(f"Gather operation {available_selection} API result: {api_result}")
                     sleep += random.randint(1, 5)
                     time.sleep(sleep)
                     self.last_gather = int(time.time())
-                    self.logger.info(f"Using troops for gather operation: {available_selection}")
+                    self.logger.info(f"Successfully started gather operation {available_selection}")
                 else:
                     # Gathering already exists or locked
-                    break
+                    if int(option) <= selection:
+                        if village_data['options'][option]['is_locked']:
+                            self.logger.info(f"Gather operation {option} is locked, skipping.")
+                        elif village_data['options'][option]['scavenging_squad'] != None:
+                            self.logger.info(f"Gather operation {option} is already underway, skipping.")
+                        else:
+                            self.logger.debug(f"Gather operation {option} doesn't meet criteria, skipping.")
+                    continue
+            # --- OPTIMIZATION ---
+            # Persist the remaining troops to the class property so farming logic can use them.
+            # Convert back to strings to maintain type consistency
+            self.troops = {key: str(value) for key, value in troops.items()}
+            # --- END OPTIMIZATION ---
 
         else:
             for option in reversed(sorted(village_data['options'].keys())):
                 self.logger.debug(
                     f"Option: {option} Locked? {village_data['options'][option]['is_locked']} Is underway? {village_data['options'][option]['scavenging_squad'] != None}")
-                if int(option) <= selection and not village_data['options'][option]['is_locked'] and not \
-                village_data['options'][option]['scavenging_squad'] != None:
+                if int(option) <= selection and not village_data['options'][option]['is_locked'] and \
+                        village_data['options'][option]['scavenging_squad'] == None:
                     available_selection = int(option)
                     self.logger.info(f"Gather operation {available_selection} is ready to start.")
                     selection = available_selection
@@ -491,24 +624,43 @@ class TroopManager:
                                 "squad_requests[0][candidate_squad][unit_counts][%s]" % item
                                 ] = troops[item]
                             total_carry += int(carry) * int(troops[item])
+                            self.logger.debug(f"Assigned {troops[item]} {item} to gather operation {available_selection}")
                         else:
                             payload[
                                 "squad_requests[0][candidate_squad][unit_counts][%s]" % item
                                 ] = "0"
                     payload["squad_requests[0][candidate_squad][carry_max]"] = str(total_carry)
                     if total_carry > 0:
+                        self.logger.info(f"Sending gather operation {available_selection} with payload: {payload}")
                         payload["h"] = self.wrapper.last_h
-                        self.wrapper.get_api_action(
+                        api_result = self.wrapper.get_api_action(
                             action="send_squads",
                             params={"screen": "scavenge_api"},
                             data=payload,
                             village_id=self.village_id,
                         )
+                        self.logger.info(f"Gather operation {available_selection} API result: {api_result}")
+                        # --- OPTIMIZATION ---
+                        # Zero out the troops that were just sent
+                        for item_def in haul_dict:
+                            item, carry = item_def.split(":")
+                            if item in self.troops:
+                                self.troops[item] = "0"
+                        # --- END OPTIMIZATION ---
                         self.last_gather = int(time.time())
-                        self.logger.info(f"Using troops for gather operation: {selection}")
+                        self.logger.info(f"Successfully started gather operation {selection}")
+                    else:
+                        self.logger.info(f"No troops available for gather operation {available_selection}, skipping.")
                 else:
                     # Gathering already exists or locked
-                    break
+                    if int(option) <= selection:
+                        if village_data['options'][option]['is_locked']:
+                            self.logger.info(f"Gather operation {option} is locked, skipping.")
+                        elif village_data['options'][option]['scavenging_squad'] != None:
+                            self.logger.info(f"Gather operation {option} is already underway, skipping.")
+                        else:
+                            self.logger.debug(f"Gather operation {option} doesn't meet criteria, skipping.")
+                    continue
         self.logger.info("All gather operations are underway.")
         return True
 
@@ -531,11 +683,12 @@ class TroopManager:
 
         existing = Extractor.active_recruit_queue(data)
         if existing:
-            self.logger.warning(
-                "Building Village %s %s recruitment queue out-of-sync"
+            self.logger.info(
+                "Building Village %s %s has active recruitment queue, syncing"
                 % (self.village_id, building)
             )
             if not self.can_fix_queue:
+                self.logger.debug("can_fix_queue is False, not clearing existing queue")
                 return True
             for entry in existing:
                 self.cancel(building=building, id=entry)
@@ -628,10 +781,10 @@ class TroopManager:
             # self.troops[unit_type] = str((int(self.troops[unit_type]) if unit_type in self.troops else 0) + amount)
             self.logger.info(
                 "Recruitment of %d %s started (%s idle till %d)",
-                    amount,
-                    unit_type,
-                    building,
-                    self.wait_for[self.village_id][building],
+                amount,
+                unit_type,
+                building,
+                self.wait_for[self.village_id][building],
             )
             self.wrapper.reporter.report(
                 self.village_id,
@@ -643,7 +796,7 @@ class TroopManager:
                     building,
                     self.wait_for[self.village_id][building],
                 ),
-            )
+                )
             return True
         return False
 

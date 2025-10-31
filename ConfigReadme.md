@@ -114,4 +114,16 @@ Each village can have a list of custom farms in the "additional_farms" parameter
 
 **Gathering**
 If troops are not used for farming and there is no incoming attack the village will automatically attempt to start a gather operation.
-You can enable/disable this using the gather parameter and set the default gather operation using the "gather_selection" option.
+You can enable/disable this using the `gather_enabled` parameter and set the default gather operation using the `gather_selection` option (1-4, higher numbers require more resources to unlock).
+
+The `advanced_gather` parameter (default: true) enables smart gathering that uses all available troops across all unlocked gather slots efficiently.
+
+**Gather Priority**
+By default, farming runs before gathering operations. If you want to prioritize gathering over farming, set `prioritize_gathering` to `true` in the village configuration. This is useful when you want to maximize resource gathering efficiency.
+
+**Auto-Unlock Gather Options**
+The bot will automatically unlock higher-level gather options (slots 2, 3, 4) when sufficient resources are available. Each unlock costs resources (wood, stone, iron) and the bot will:
+- Check if you have enough resources to unlock the next option
+- Automatically spend resources to unlock it
+- Request resources from other villages if the balancer is enabled
+- Refetch the gather page after unlocking to use the new slot immediately

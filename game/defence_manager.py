@@ -68,11 +68,16 @@ class DefenceManager:
         )
         return self.support(requesting_village, troops=send_support)
 
-    def update(self, main, with_defence=False):
+    # --- PERFORMANCE (POINT 2) ---
+    def update(self, main_html, with_defence=False):
+        """
+        Uses cached overview_html from Village.run
+        """
         ok = True
         self.manage_flags()
         self.runs += 1
-        if "command/attack.png" in main:
+        if "command/attack.png" in main_html:
+            # --- END PERFORMANCE ---
             self.under_attack = True
             ok = False
             self.flag_logic(self.set_flag_under_attack)
@@ -87,7 +92,7 @@ class DefenceManager:
             index = 0
 
             for vil in self.my_other_villages:
-                if vil != self.village_id:
+                if vil == self.village_id:
                     continue
                 if len(self.supported) >= self.support_max_villages:
                     self.logger.debug("Already supported 2 villages, ignoring")
@@ -119,8 +124,8 @@ class DefenceManager:
         if to_hide and len(self.my_other_villages) == 1:
             # good luck ;)
             return False
-        for v_obj in self.my_other_villages:
-            vid, attack_state = v_obj
+        for vid in self.my_other_villages:
+            attack_state = self.my_other_villages[vid]
             if vid == self.village_id:
                 continue
             if not attack_state:
@@ -154,6 +159,9 @@ class DefenceManager:
             self.flag_set(
                 set_flag, level=self.get_highest_flag_possible(flag_id=set_flag)
             )
+            # --- FIX: Manually update internal state to prevent endless loop ---
+            self.current_flag = [set_flag, self.get_highest_flag_possible(flag_id=set_flag)]
+            # --- END FIX ---
             self.logger.info(
                 "Setting flag %d level %d for village %s",
                 set_flag, self.get_highest_flag_possible(flag_id=set_flag), self.village_id
@@ -223,18 +231,16 @@ class DefenceManager:
         self.flags = {}
         for flag_type in raw_flags:
             for level in raw_flags[flag_type]:
-                for amount in raw_flags[flag_type][level]:
-                    if int(amount) >= 3:
-                        self.flag_upgrade(flag=flag_type, level=level)
-                        self.logger.info("Upgraded flag %s", flag_type)
-                        upgraded += 1
-                    if int(amount) > 0:
-                        if int(flag_type) not in self.flags or self.flags[
-                            int(flag_type)
-                        ] < int(level):
-                            self.flags[int(flag_type)] = int(level)
-        if upgraded:
-            return self.manage_flags()
+                amount = raw_flags[flag_type][level]
+                if int(amount) >= 3 and self._can_change_flag:
+                    self.flag_upgrade(flag=flag_type, level=level)
+                    self.logger.info("Upgraded flag %s", flag_type)
+                    upgraded += 1
+                if int(amount) > 0:
+                    if int(flag_type) not in self.flags or self.flags[
+                        int(flag_type)
+                    ] < int(level):
+                        self.flags[int(flag_type)] = int(level)
 
     def support(self, vid, troops=None):
         url = f"game.php?village={self.village_id}&screen=place&target={vid}"

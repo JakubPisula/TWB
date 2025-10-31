@@ -20,9 +20,9 @@ class BuildingManager:
     # Increasing this will gain massive points but lack of resources
     max_lookahead = 2
 
-    queue = []
-    waits = []
-    waits_building = []
+    queue: list[str] = []
+    waits: list[float] = []
+    waits_building: list[str] = []
 
     costs = {}
 
@@ -58,20 +58,37 @@ class BuildingManager:
 
         return extracted_buildings
 
-    def start_update(self, build=False, set_village_name=None):
+    # --- PERFORMANCE (POINT 2) ---
+    def start_update(self, overview_game_data, overview_html, build=False, set_village_name=None):
         """
         Start a building manager run
+        Uses cached game_data and overview_html passed from Village.run
         """
+        # Use cached game_data but fetch main screen for building data
+        self.game_state = overview_game_data
+        # Building data can only be extracted from main screen, not overview
         main_data = self.wrapper.get_action(village_id=self.village_id, action="main")
-        self.game_state = Extractor.game_state(main_data)
+        main_data_text = main_data.text
+        # --- END PERFORMANCE ---
+
         vname = self.game_state["village"]["name"]
 
         if not self.logger:
             self.logger = logging.getLogger(fr"Builder: {vname}")
 
-        if self.complete_actions(main_data.text):
-            return self.start_update(build=build, set_village_name=set_village_name)
-        self.costs = Extractor.building_data(main_data)
+        if self.complete_actions(main_data_text):
+            # If actions were completed, we must refetch state
+            return self.start_update(
+                overview_game_data=Extractor.game_state(self.wrapper.last_response),
+                overview_html=self.wrapper.last_response.text,
+                build=build,
+                set_village_name=set_village_name
+            )
+
+        self.costs = Extractor.building_data(main_data_text)
+        if self.costs is None:
+            self.logger.error("Failed to extract building data from main screen")
+            return False
         self.costs = self.create_update_links(self.costs)
 
         if self.resman:
@@ -90,7 +107,7 @@ class BuildingManager:
         for e in tmp:
             tmp[e] = int(tmp[e])
         self.levels = tmp
-        existing_queue = Extractor.active_building_queue(main_data)
+        existing_queue = Extractor.active_building_queue(main_data_text)
         if existing_queue == 0:
             self.waits = []
             self.waits_building = []
@@ -127,10 +144,20 @@ class BuildingManager:
                 )
                 return False
         # Check for instant build after putting something in the queue
+
+        # --- PERFORMANCE (POINT 2) ---
+        # Refetch main screen data *only* if we actually built something
         main_data = self.wrapper.get_action(village_id=self.village_id, action="main")
         if self.complete_actions(main_data.text):
             self.can_build_three_min = True
-            return self.start_update(build=build, set_village_name=set_village_name)
+            # Recurse with new data
+            return self.start_update(
+                overview_game_data=Extractor.game_state(self.wrapper.last_response),
+                overview_html=self.wrapper.last_response.text,
+                build=build,
+                set_village_name=set_village_name
+            )
+        # --- END PERFORMANCE ---
         return True
 
     def complete_actions(self, text):
@@ -308,7 +335,7 @@ class BuildingManager:
                         self.levels[entry] + 1,
                         self.readable_ts(queue),
                     ),
-                )
+                    )
                 self.levels[entry] += 1
                 response = self.wrapper.get_url(check["build_link"].replace("amp;", ""))
                 if self.can_build_three_min:
@@ -322,6 +349,9 @@ class BuildingManager:
                     # Building was completed, queueing another
                 self.game_state = Extractor.game_state(response)
                 self.costs = Extractor.building_data(response)
+                if self.costs is None:
+                    self.logger.error("Failed to extract building data after building action")
+                    return False
                 # Trigger function again because game state is changed
                 self.costs = self.create_update_links(self.costs)
                 if self.resman and "building" in self.resman.requested:

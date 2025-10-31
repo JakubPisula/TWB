@@ -3,6 +3,7 @@
 import json
 import logging
 import re
+import time
 from typing import Any, Dict, List, Literal, Optional
 
 
@@ -68,6 +69,29 @@ class Extractor:
         if dre:
             return json.loads(dre.group(1), strict=False)
 
+        # Log diagnostic information when extraction fails
+        logger = logging.getLogger("Extractor")
+        logger.debug("Failed to extract building data - regex pattern did not match")
+        logger.debug(f"Response length: {len(res)} characters")
+        
+        # Check if we're on the right page
+        if 'screen=main' in res:
+            logger.debug("Confirmed on main screen page")
+        else:
+            logger.warning("Not on main screen page - check page navigation")
+        
+        # Save HTML for debugging if extraction fails
+        try:
+            import os
+            debug_dir = "cache/logs"
+            os.makedirs(debug_dir, exist_ok=True)
+            debug_file = os.path.join(debug_dir, f"building_extract_fail_{int(time.time())}.html")
+            with open(debug_file, 'w', encoding='utf-8') as f:
+                f.write(res)
+            logger.debug(f"Saved failed extraction HTML to: {debug_file}")
+        except Exception as e:
+            logger.debug(f"Could not save debug HTML: {e}")
+        
         return None
 
     @staticmethod

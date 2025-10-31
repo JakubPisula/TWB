@@ -8,6 +8,9 @@ from datetime import datetime
 
 from core.extractors import Extractor
 from core.filemanager import FileManager
+# --- PERFORMANCE (POINT 3) ---
+from game.attack import AttackCache
+# --- END PERFORMANCE ---
 
 
 class ReportManager:
@@ -92,10 +95,13 @@ class ReportManager:
                     return 0  # Disengage if anything was lost!
         return -1
 
-    def read(self, page=0, full_run=False):
+    # --- PERFORMANCE (POINT 2) ---
+    def read(self, page=0, full_run=False, overview_html=None):
         """
         Read some (or all if you like) reports
+        Uses cached overview_html for page 0
         """
+        # --- END PERFORMANCE ---
         if not self.logger:
             self.logger = logging.getLogger("Reports")
 
@@ -103,15 +109,25 @@ class ReportManager:
             self.logger.info("First run, re-reading cache entries")
             self.last_reports = ReportCache.cache_grab()
             self.logger.info("Got %d reports from cache", len(self.last_reports))
-        offset = page * 12
-        url = f"game.php?village={self.village_id}&screen=report&mode=all"
-        if page > 0:
-            url += f"&from={offset}"
-        result = self.wrapper.get_url(url)
-        self.game_state = Extractor.game_state(result)
-        new = 0
 
-        ids = Extractor.report_table(result)
+        ids = []
+        # --- PERFORMANCE (POINT 2) ---
+        if page == 0 and overview_html:
+            self.logger.debug("Reading reports from cached overview_html")
+            self.game_state = Extractor.game_state(overview_html)
+            ids = Extractor.report_table(overview_html)
+        else:
+            # Fetch subsequent pages normally
+            offset = page * 12
+            url = f"game.php?village={self.village_id}&screen=report&mode=all"
+            if page > 0:
+                url += f"&from={offset}"
+            result = self.wrapper.get_url(url)
+            self.game_state = Extractor.game_state(result)
+            ids = Extractor.report_table(result)
+        # --- END PERFORMANCE ---
+
+        new = 0
         for report_id in ids:
             if report_id in self.last_reports:
                 continue
@@ -129,12 +145,13 @@ class ReportManager:
                 else:
                     res = self.put(report_id, report_type=report_type)
                     self.last_reports[report_id] = res
-        if new == 12 or full_run and page < 20:
+        if new == 12 or (full_run and page < 20):
             page += 1
             self.logger.debug(
                 "%d new reports where added, also checking page %d", new, page
             )
             return self.read(page, full_run=full_run)
+        return None
 
     def re_unit(self, inp):
         """
@@ -174,7 +191,7 @@ class ReportManager:
 
         losses = {}
 
-        attacked = re.search(r'(\d{2}\.\d{2}\.\d{2} \d{2}\:\d{2}\:\d{2})<span class=\"small grey\">', report)
+        attacked = re.search(r'(\d{2}\.\d{2}\.\d{2} \d{2}:\d{2}:\d{2})<span class=\"small grey\">', report)
         if attacked:
             extra["when"] = int(datetime.strptime(attacked.group(1), "%d.%m.%y %H:%M:%S").timestamp())
 
@@ -262,11 +279,87 @@ class ReportManager:
                 extra["units_away"] = data_away
 
         attack_type = "scout" if scout_results and not results else "attack"
+
+        # --- PERFORMANCE (POINT 3) ---
+        # Update farm statistics immediately when processing the report
+        if attack_type == "attack" and to_village and from_player == self.game_state["player"]["id"]:
+            try:
+                self.update_farm_cache_stats(to_village, extra, losses)
+            except Exception as e:
+                self.logger.warning(f"Failed to update farm cache for {to_village}: {e}")
+        # --- END PERFORMANCE ---
+
         res = self.put(
             report_id, attack_type, from_village, to_village, data=extra, losses=losses
         )
         self.last_reports[report_id] = res
         return True
+
+    # --- PERFORMANCE (POINT 3) ---
+    def update_farm_cache_stats(self, village_id, extra_data, losses):
+        """
+        Updates the AttackCache with loot and loss statistics
+        This logic is moved from manager.py to run on report processing
+        """
+        if not village_id:
+            return
+
+        cache_entry = AttackCache.get_cache(village_id)
+        if cache_entry is None:
+            # Don't create new entries here, only update existing ones
+            # New entries are created by AttackManager.attacked
+            self.logger.debug(f"No attack cache found for {village_id}, skipping stat update.")
+            return
+
+        # Initialize stats if not present
+        cache_entry.setdefault("attack_count", 0)
+        cache_entry.setdefault("total_loot", {"wood": 0, "stone": 0, "iron": 0})
+        cache_entry.setdefault("total_losses", 0)
+        cache_entry.setdefault("total_sent", 0)
+
+        # Update stats
+        cache_entry["attack_count"] += 1
+
+        if extra_data.get("loot"):
+            loot = extra_data["loot"]
+            for res, amount in loot.items():
+                cache_entry["total_loot"][res] = cache_entry["total_loot"].get(res, 0) + int(amount)
+
+        if extra_data.get("units_sent"):
+            cache_entry["total_sent"] += sum(int(v) for v in extra_data["units_sent"].values())
+
+        if losses:
+            cache_entry["total_losses"] += sum(int(v) for v in losses.values())
+
+        # Apply farm profile logic
+        percentage_lost = (cache_entry["total_losses"] / cache_entry["total_sent"] * 100) if cache_entry["total_sent"] > 0 else 0
+        total_loot_sum = sum(cache_entry["total_loot"].values())
+        avg_loot = total_loot_sum / cache_entry["attack_count"] if cache_entry["attack_count"] > 0 else 0
+
+        if cache_entry["attack_count"] > 3:
+            if avg_loot < 100:
+                if not cache_entry.get("low_profile"):
+                    self.logger.info(f"Farm {village_id} has low resources ({avg_loot:.0f} avg), setting low_profile.")
+                    cache_entry["low_profile"] = True
+            elif avg_loot > 500:
+                if not cache_entry.get("high_profile"):
+                    self.logger.info(f"Farm {village_id} has high resources ({avg_loot:.0f} avg), setting high_profile.")
+                    cache_entry["high_profile"] = True
+                    cache_entry["low_profile"] = False
+
+        if percentage_lost > 20:
+            if not cache_entry.get("low_profile"):
+                self.logger.warning(f"Farm {village_id} has high losses ({percentage_lost:.0f}%), setting low_profile.")
+                cache_entry["low_profile"] = True
+                cache_entry["high_profile"] = False
+
+        if percentage_lost > 50 and cache_entry["attack_count"] > 10:
+            if cache_entry.get("safe", True):
+                self.logger.critical(f"Farm {village_id} is unsafe ({percentage_lost:.0f}% loss), disabling farm.")
+                cache_entry["safe"] = False
+
+        AttackCache.set_cache(village_id, cache_entry)
+    # --- END PERFORMANCE ---
 
     def put(
             self,

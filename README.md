@@ -24,6 +24,11 @@ TWB bietet eine breite Palette an Funktionen, die eine umfassende Automatisierun
     *   **Intelligente Optimierung:** Analysiert Berichte, um die Effizienz zu bewerten. Passt die Farmziele und Angriffspausen dynamisch an (z.B. längere Pausen für Dörfer mit wenig Beute oder hohen Verlusten).
     *   **Beutelimit-Schutz:** Überwacht das weltweite Farm-Beutelimit auf der Place-Seite und verhindert weitere Farm- oder Scout-Befehle, wenn das Limit (inkl. Sicherheitsmarge) erreicht ist.
 *   **Marktplatz-Manager:** Gleicht Ressourcen zwischen den Dörfern automatisch aus, um Engpässe zu vermeiden und den Bau zu beschleunigen.
+*   **Ressourcensammler (Scavenger):**
+    *   Nutzt automatisch freie Truppen zum Ressourcensammeln, wenn diese nicht für Farmen oder Verteidigung benötigt werden.
+    *   **Auto-Unlock:** Schaltet höhere Sammel-Stufen automatisch frei, sobald genügend Ressourcen vorhanden sind.
+    *   **Intelligente Priorisierung:** Weist alle verfügbaren Truppen den effizientesten Sammel-Operationen zu.
+    *   **Konfigurierbare Priorität:** Du kannst wählen, ob Sammeln oder Farmen Vorrang hat.
 *   **Forschungs-Manager:** Führt automatisch Forschungen in der Schmiede durch, sobald die Voraussetzungen erfüllt sind.
 *   **Automatische Adelung:** Prägt Münzen und adelt vollautomatisch neue Dörfer.
 *   **Berichts-Manager:** Verarbeitet und analysiert eingehende Berichte.
@@ -142,6 +147,10 @@ Dies ist eine Vorlage für alle neu hinzugefügten Dörfer. Jedes Dorf in der `"
 *   `"farm_bag_limit_override"`: Setze `true` oder `false`, um das globale Farm-Beutelimit für dieses Dorf explizit zu aktivieren bzw. zu deaktivieren. `null` übernimmt die globale Einstellung.
 *   `"additional_farms"`: Eine Liste von Dorf-IDs (als Strings), die zusätzlich zu den automatisch gefundenen Barbarendörfern gefarmt werden sollen. **Vorsicht:** Der Bot prüft nicht, wem diese Dörfer gehören!
 *   `"gather_enabled"`: Wenn `true`, schickt der Bot Truppen zum Sammeln, wenn sie nicht für Angriffe oder Farmen gebraucht werden.
+*   `"gather_selection"`: Die maximale Stufe der Sammel-Operationen (1-4). Höhere Stufen bringen mehr Ressourcen, müssen aber zuerst freigeschaltet werden.
+*   `"advanced_gather"`: Wenn `true` (Standard), weist der Bot alle verfügbaren Truppen intelligent den höchsten Sammel-Operationen zu, um maximale Effizienz zu erreichen.
+*   `"prioritize_gathering"`: Wenn `true`, führt der Bot Sammel-Operationen **vor** dem Farmen aus. Standard ist `false` (Farmen hat Vorrang). Nützlich, wenn du die Ressourcensammlung maximieren möchtest.
+*   **Auto-Unlock von Sammel-Optionen**: Der Bot schaltet automatisch höhere Sammel-Slots (2, 3, 4) frei, wenn genügend Ressourcen vorhanden sind. Dabei prüft er die Kosten, fordert bei Bedarf Ressourcen vom Balancer an und nutzt die neuen Slots sofort nach dem Freischalten.
 
 ---
 

@@ -1,301 +1,457 @@
-# Tribal Wars Bot (TWB)
+<div align="center">
 
-Ein Open-Source-Bot für das Browsergame "Die Stämme".
+# 🏰 Tribal Wars Bot (TWB)
+
+### Ein hochentwickelter Open-Source-Bot für "Die Stämme"
+
+[![Python](https://img.shields.io/badge/Python-3.x-blue.svg)](https://www.python.org/)
+[![License](https://img.shields.io/badge/License-GPL%20v3.0-green.svg)](LICENSE.md)
+[![Discord](https://img.shields.io/badge/Discord-Join%20Server-7289da.svg)](https://discord.gg/8PuzHjttMy)
 
 TWB ist ein hochentwickelter Bot, der darauf ausgelegt ist, eine Vielzahl von Aufgaben im Spiel zu automatisieren. Von der Ressourcenverwaltung bis hin zur komplexen Angriffs- und Verteidigungsstrategie nimmt Ihnen TWB die repetitiven Aufgaben ab und ermöglicht es Ihnen, sich auf die strategische Planung zu konzentrieren.
 
-## Discord-Community
-Für Hilfe, Diskussionen und den Austausch mit anderen Nutzern gibt es einen [offiziellen Discord-Server](https://discord.gg/8PuzHjttMy).
+[🚀 Installation](#-installation) • [📖 Dokumentation](#%EF%B8%8F-erster-start--konfiguration) • [💬 Discord](https://discord.gg/8PuzHjttMy) • [🐛 Issues](https://github.com/Themegaindex/TWB/issues)
 
-## Wichtiger Hinweis (Disclaimer)
-**Die Nutzung dieses Bots verstößt gegen die Spielregeln von "Die Stämme" und kann zur dauerhaften Sperrung deines Accounts führen.** Die Entwickler und Mitwirkenden dieses Projekts übernehmen keine Haftung für eventuelle Konsequenzen. Du nutzt diese Software auf eigenes Risiko. Wir empfehlen dringend, den Bot so zu konfigurieren, dass sein Verhalten menschlichem Spiel möglichst nahekommt (z. B. durch realistische Pausenzeiten), um das Entdeckungsrisiko zu minimieren.
+</div>
 
-## Features
+---
 
-TWB bietet eine breite Palette an Funktionen, die eine umfassende Automatisierung des Spielgeschehens ermöglichen:
+## 💬 Discord-Community
 
-*   **Kooperativer Modus:** Du kannst weiterhin über den Browser spielen, während der Bot im Hintergrund Aufgaben verwaltet, ohne dass es zu Konflikten kommt.
-*   **Gebäudemanager:** Automatisiert den Ausbau von Gebäuden basierend auf anpassbaren Vorlagen (`templates`).
-*   **Truppenmanager:** Rekrutiert automatisch Einheiten basierend auf Vorlagen und passt die Produktion an die verfügbaren Ressourcen an.
-*   **Verteidigungsmanager:** Reagiert auf eingehende Angriffe, evakuiert Truppen und kann automatisch Unterstützung von anderen eigenen Dörfern anfordern.
-*   **Flaggen-Management:** Weist Flaggen automatisch zu, um Boni (z.B. Ressourcenproduktion, Verteidigungsstärke) zu maximieren.
-*   **Farm-Manager:**
-    *   Sucht und farmt automatisch Barbarendörfer in der Umgebung.
-    *   **Intelligente Optimierung:** Analysiert Berichte, um die Effizienz zu bewerten. Passt die Farmziele und Angriffspausen dynamisch an (z.B. längere Pausen für Dörfer mit wenig Beute oder hohen Verlusten).
-    *   **Beutelimit-Schutz:** Überwacht das weltweite Farm-Beutelimit auf der Place-Seite und verhindert weitere Farm- oder Scout-Befehle, wenn das Limit (inkl. Sicherheitsmarge) erreicht ist.
-*   **Marktplatz-Manager:** Gleicht Ressourcen zwischen den Dörfern automatisch aus, um Engpässe zu vermeiden und den Bau zu beschleunigen.
-*   **Ressourcensammler (Scavenger):**
-    *   Nutzt automatisch freie Truppen zum Ressourcensammeln, wenn diese nicht für Farmen oder Verteidigung benötigt werden.
-    *   **Auto-Unlock:** Schaltet höhere Sammel-Stufen automatisch frei, sobald genügend Ressourcen vorhanden sind.
-    *   **Intelligente Priorisierung:** Weist alle verfügbaren Truppen den effizientesten Sammel-Operationen zu.
-    *   **Konfigurierbare Priorität:** Du kannst wählen, ob Sammeln oder Farmen Vorrang hat.
-*   **Forschungs-Manager:** Führt automatisch Forschungen in der Schmiede durch, sobald die Voraussetzungen erfüllt sind.
-*   **Automatische Adelung:** Prägt Münzen und adelt vollautomatisch neue Dörfer.
-*   **Berichts-Manager:** Verarbeitet und analysiert eingehende Berichte.
-*   **ReCaptcha-Umgang:** Umgeht das Login-Captcha durch die Verwendung eines gültigen Browser-Cookies, was einen ununterbrochenen Betrieb ermöglicht, solange die Browser-Sitzung gültig ist.
-*   **Web-Interface:** Ein lokales Web-Dashboard zur Überwachung und Steuerung des Bots.
-*   **Benachrichtigungen:** Unterstützt Benachrichtigungen über [Telegram](https://telegram.org/), um dich über wichtige Ereignisse (z.B. Angriffe) zu informieren.
-*   **Dynamische Konfiguration:**
-    *   Neu eroberte Dörfer werden automatisch zur Konfiguration hinzugefügt.
-    *   Die Konfiguration wird bei Updates automatisch mit neuen Optionen zusammengeführt, ohne deine Einstellungen zu überschreiben.
+Für Hilfe, Diskussionen und den Austausch mit anderen Nutzern gibt es einen [**offiziellen Discord-Server**](https://discord.gg/8PuzHjttMy).
 
-## Installation
+---
 
-Folge dieser Anleitung, um den Bot auf deinem System einzurichten.
+## ⚠️ Wichtiger Hinweis (Disclaimer)
 
-### 1. Voraussetzungen
+> **🚨 WARNUNG:** Die Nutzung dieses Bots verstößt gegen die Spielregeln von "Die Stämme" und kann zur **dauerhaften Sperrung** deines Accounts führen.
+>
+> Die Entwickler und Mitwirkenden dieses Projekts übernehmen **keine Haftung** für eventuelle Konsequenzen. Du nutzt diese Software **auf eigenes Risiko**.
+>
+> 💡 **Empfehlung:** Konfiguriere den Bot so, dass sein Verhalten menschlichem Spiel möglichst nahekommt (z. B. durch realistische Pausenzeiten), um das Entdeckungsrisiko zu minimieren.
 
-*   **Python 3.x:** Du benötigst eine installierte Version von Python 3. Eine Anleitung zur Installation findest du auf der [offiziellen Python-Website](https://www.python.org/downloads/). Stelle sicher, dass du bei der Installation die Option "Add Python to PATH" aktivierst.
-*   **Bot-Dateien:** Lade das Projekt von GitHub herunter. Du kannst dies entweder über `git clone` tun oder indem du das Projekt als ZIP-Datei herunterlädst und entpackst.
+---
 
-### 2. Abhängigkeiten installieren
+## ✨ Features
 
-Öffne eine Kommandozeile (Terminal, PowerShell, CMD) im Hauptverzeichnis des Bots (dort, wo sich die `requirements.txt`-Datei befindet) und führe den folgenden Befehl aus, um alle notwendigen Python-Pakete zu installieren:
+<details open>
+<summary><b>📋 Übersicht der Hauptfunktionen</b></summary>
+
+### 🎮 Grundlegende Features
+
+| Feature | Beschreibung |
+|---------|--------------|
+| 🤝 **Kooperativer Modus** | Spiele weiterhin über den Browser, während der Bot im Hintergrund Aufgaben verwaltet - ohne Konflikte |
+| 🏗️ **Gebäudemanager** | Automatisiert den Ausbau von Gebäuden basierend auf anpassbaren Vorlagen (`templates`) |
+| ⚔️ **Truppenmanager** | Rekrutiert automatisch Einheiten basierend auf Vorlagen und passt die Produktion an verfügbare Ressourcen an |
+| 🛡️ **Verteidigungsmanager** | Reagiert auf eingehende Angriffe, evakuiert Truppen und fordert automatisch Unterstützung an |
+| 🚩 **Flaggen-Management** | Weist Flaggen automatisch zu, um Boni (Ressourcenproduktion, Verteidigungsstärke) zu maximieren |
+| 🔬 **Forschungs-Manager** | Führt automatisch Forschungen in der Schmiede durch, sobald die Voraussetzungen erfüllt sind |
+| 👑 **Automatische Adelung** | Prägt Münzen und adelt vollautomatisch neue Dörfer |
+| 📊 **Berichts-Manager** | Verarbeitet und analysiert eingehende Berichte automatisch |
+
+### 🌾 Farm-Management (Erweitert)
+
+- ✅ **Automatische Barbarensuche:** Sucht und farmt automatisch Barbarendörfer in der Umgebung
+- 🧠 **Intelligente Optimierung:** Analysiert Berichte zur Effizienz-Bewertung und passt Farmziele dynamisch an
+- 📈 **Adaptive Pausen:** Längere Pausen für Dörfer mit wenig Beute oder hohen Verlusten
+- 🔒 **Beutelimit-Schutz:** Überwacht das weltweite Farm-Beutelimit und verhindert weitere Befehle bei Erreichen
+
+### 💰 Ressourcen-Management
+
+#### 🏪 Marktplatz-Manager
+Gleicht Ressourcen zwischen den Dörfern automatisch aus, um Engpässe zu vermeiden und den Bau zu beschleunigen.
+
+#### 🔍 Ressourcensammler (Scavenger)
+- 🔄 **Automatische Nutzung:** Nutzt freie Truppen zum Ressourcensammeln, wenn sie nicht für Farmen/Verteidigung benötigt werden
+- 🔓 **Auto-Unlock:** Schaltet höhere Sammel-Stufen automatisch frei
+- 🎯 **Intelligente Priorisierung:** Weist alle verfügbaren Truppen den effizientesten Operationen zu
+- ⚙️ **Konfigurierbare Priorität:** Wähle zwischen Sammeln oder Farmen als Vorrang
+
+### 🔧 Technische Features
+
+| Feature | Beschreibung |
+|---------|--------------|
+| 🔐 **ReCaptcha-Umgang** | Umgeht Login-Captcha durch Browser-Cookies für ununterbrochenen Betrieb |
+| 🖥️ **Web-Interface** | Lokales Dashboard zur Überwachung und Steuerung des Bots |
+| 📱 **Telegram-Benachrichtigungen** | Informiert dich über wichtige Ereignisse (z.B. Angriffe) |
+| 🔄 **Dynamische Konfiguration** | Neu eroberte Dörfer werden automatisch hinzugefügt; Updates werden intelligent zusammengeführt |
+
+</details>
+
+---
+
+## 🚀 Installation
+
+<details open>
+<summary><b>📦 Setup-Anleitung</b></summary>
+
+### 1️⃣ Voraussetzungen
+
+| Anforderung | Details |
+|-------------|---------|
+| 🐍 **Python 3.x** | Installiere Python von der [offiziellen Website](https://www.python.org/downloads/)<br>⚠️ **Wichtig:** Aktiviere bei der Installation "Add Python to PATH" |
+| 📁 **Bot-Dateien** | Lade das Projekt von GitHub herunter:<br>• Via Git: `git clone https://github.com/Themegaindex/TWB.git`<br>• Oder als [ZIP-Datei](https://github.com/Themegaindex/TWB/archive/refs/heads/master.zip) |
+
+### 2️⃣ Abhängigkeiten installieren
+
+Öffne eine Kommandozeile (Terminal, PowerShell, CMD) im Hauptverzeichnis des Bots:
 
 ```bash
+# Standard-Installation
 pip install -r requirements.txt
-```
 
-Oder, falls du mehrere Python-Versionen hast, stelle sicher, dass du die `pip`-Version von Python 3 verwendest:
-
-```bash
+# Bei mehreren Python-Versionen
 python -m pip install -r requirements.txt
 ```
 
-### 3. Bot starten
-
-Nachdem die Installation der Abhängigkeiten abgeschlossen ist, kannst du den Bot mit diesem Befehl starten:
+### 3️⃣ Bot starten
 
 ```bash
 python twb.py
 ```
 
-Beim ersten Start wird der Bot feststellen, dass noch keine Konfigurationsdatei (`config.json`) vorhanden ist und dich durch einen interaktiven Einrichtungs-Wizard führen.
+> 💡 **Hinweis:** Beim ersten Start wird ein interaktiver Einrichtungs-Wizard gestartet, der dich durch die Grundkonfiguration führt.
 
-## Erster Start & Konfiguration
-
-Die gesamte Steuerung des Bots erfolgt über die zentrale Konfigurationsdatei `config.json`. Wenn du den Bot zum ersten Mal startest, wird eine solche Datei für dich erstellt.
-
-### Der Konfigurations-Wizard
-
-Wenn du `python twb.py` ohne eine vorhandene `config.json` ausführst, startet ein interaktiver Wizard, der dich nach den grundlegendsten Informationen fragt:
-1.  **Spiel-URL:** Die vollständige URL, die du in deinem Browser siehst, wenn du im Spiel angemeldet bist (z.B. `https://de123.die-staemme.de/game.php?village=12345&screen=overview`).
-2.  **User-Agent:** Dein Browser-User-Agent, um die Bot-Anfragen zu tarnen. Suche einfach in Google nach "what is my user agent" und kopiere die Zeichenkette.
-
-Nachdem du diese Schritte befolgt hast, wird eine `config.json` erstellt und der Bot ist bereit für die weitere Konfiguration.
-
-### Die `config.json` im Detail
-
-Du kannst die `config.json` mit einem beliebigen Texteditor öffnen und bearbeiten. Der Bot lädt Änderungen an der Datei automatisch bei jedem neuen Durchlauf neu.
-
-Hier ist eine detaillierte Erklärung aller Sektionen und Parameter:
+</details>
 
 ---
 
-### `server`
-Diese Sektion enthält die grundlegenden Informationen zu deinem Spielserver.
+## ⚙️ Erster Start & Konfiguration
 
-*   `"server"`: Der Kurzname deines Servers (z.B. `"de123"`).
-*   `"endpoint"`: Die URL zum Spiel-Endpunkt. Endet normalerweise auf `game.php`. Wird vom Wizard automatisch gesetzt.
-*   `"server_on_twstats"`: Setze dies auf `false`, wenn deine Welt nicht auf [twstats.com](http://twstats.com/) gelistet ist. Dies beeinflusst, wie der Bot Weltdaten (z.B. für Gebäude) abruft.
+<details>
+<summary><b>🎯 Konfigurations-Wizard</b></summary>
 
----
+Die gesamte Steuerung des Bots erfolgt über die zentrale Konfigurationsdatei `config.json`.
 
-### `bot`
-Allgemeine Einstellungen zum Verhalten des Bots.
+### 🧙 Der Setup-Wizard
 
-*   `"active_hours"`: Die Stunden, in denen der Bot aktiv sein soll (z.B. `"6-23"` für 06:00 bis 23:00 Uhr). Außerhalb dieser Zeit läuft der Bot im inaktiven Modus.
-*   `"active_delay"`: Die minimale Wartezeit (in Sekunden) zwischen den Aktionen während der aktiven Stunden.
-*   `"inactive_delay"`: Die minimale Wartezeit im inaktiven Modus.
-*   `"inactive_still_active"`: Wenn `true`, führt der Bot auch im inaktiven Modus weiterhin Aktionen aus, nur eben langsamer. Wenn `false`, stoppt der Bot komplett und deine Sitzung läuft wahrscheinlich ab.
-*   `"add_new_villages"`: Wenn `true`, werden neu eroberte Dörfer automatisch zur Konfiguration hinzugefügt, wobei die Einstellungen aus `village_template` übernommen werden.
-*   `"user_agent"`: Dein Browser-User-Agent. **Sehr wichtig, um das Entdeckungsrisiko zu senken.**
-*   `"farm_bag_limit_margin"`: Prozentualer Sicherheitsabstand (zwischen 0.0 und 0.2) zum Welt-Beutelimit, ab dem keine weiteren Farm- oder Scout-Befehle mehr ausgelöst werden.
+Beim ersten Start von `python twb.py` wirst du durch einen interaktiven Wizard geführt:
 
----
+| Schritt | Information | Beispiel |
+|---------|-------------|----------|
+| 1️⃣ **Spiel-URL** | Die vollständige URL aus deinem Browser | `https://de123.die-staemme.de/game.php?village=12345&screen=overview` |
+| 2️⃣ **User-Agent** | Dein Browser-User-Agent (Google: "what is my user agent") | `Mozilla/5.0 (Windows NT 10.0; Win64; x64)...` |
 
-### `building`
-Einstellungen für den Gebäudemanager.
+> ✅ Nach Abschluss wird eine `config.json` erstellt und der Bot ist einsatzbereit!
 
-*   `"manage_buildings"`: Globaler Schalter. Wenn `false`, wird der Bau in allen Dörfern deaktiviert.
-*   `"default"`: Die Standard-Bauvorlage aus dem `templates/builder/` Ordner (z.B. `"purple_predator"`).
-*   `"max_lookahead"`: Wie viele Gebäude in der Bauschleife der Bot überspringen darf, wenn die Voraussetzungen (z.B. Rohstoffe) nicht erfüllt sind. Ein Wert unter 5 wird empfohlen.
-*   `"max_queued_items"`: Die maximale Anzahl an Gebäuden, die gleichzeitig in der Bauschleife sein können.
+</details>
 
----
+<details>
+<summary><b>📝 Detaillierte Konfiguration</b></summary>
 
-### `units`
-Einstellungen für die Truppenrekrutierung.
+Die `config.json` kann mit jedem Texteditor bearbeitet werden. Änderungen werden beim nächsten Bot-Durchlauf automatisch geladen.
 
-*   `"recruit"`: Globaler Schalter. Wenn `true`, rekrutiert der Bot Einheiten.
-*   `"upgrade"`: Wenn `true`, forscht der Bot automatisch Einheiten, die in der aktuellen Truppenvorlage des Dorfes definiert sind.
-*   `"default"`: Die Standard-Truppenvorlage aus dem `templates/troops/` Ordner (z.B. `"basic"`).
-*   `"batch_size"`: Die Anzahl der Einheiten, die der Bot auf einmal zu rekrutieren versucht. Im Lategame sind Werte von 500-1500 sinnvoll.
-*   `"manage_defence"`: Globaler Schalter für das Verteidigungsmanagement.
+### 🌐 `server` - Server-Einstellungen
+
+| Parameter | Beschreibung | Beispiel |
+|-----------|--------------|----------|
+| `server` | Kurzname deines Servers | `"de123"` |
+| `endpoint` | URL zum Spiel-Endpunkt | `"https://de123.die-staemme.de/game.php"` |
+| `server_on_twstats` | Server auf twstats.com gelistet? | `true` / `false` |
 
 ---
 
-### `village_template` & Dorf-spezifische Konfiguration
-Dies ist eine Vorlage für alle neu hinzugefügten Dörfer. Jedes Dorf in der `"villages"` Sektion kann diese Einstellungen individuell überschreiben.
+### 🤖 `bot` - Bot-Verhalten
 
-*   `"building"`: Überschreibt die globale Bauvorlage für dieses Dorf.
-*   `"units"`: Überschreibt die globale Truppenvorlage für dieses Dorf.
-*   `"managed"`: Wenn `false`, wird dieses Dorf vom Bot komplett ignoriert.
-*   `"prioritize_building"`: Wenn `true`, wird die Rekrutierung pausiert, bis die Bauschleife voll ist.
-*   `"prioritize_snob"`: Wenn `true`, reserviert der Bot Ressourcen für die Münzprägung und den Bau von Adelsgeschlechtern.
-*   `"snobs"`: Die maximale Anzahl an AGs, die in diesem Dorf gebaut werden sollen.
-*   `"farm_bag_limit_override"`: Setze `true` oder `false`, um das globale Farm-Beutelimit für dieses Dorf explizit zu aktivieren bzw. zu deaktivieren. `null` übernimmt die globale Einstellung.
-*   `"additional_farms"`: Eine Liste von Dorf-IDs (als Strings), die zusätzlich zu den automatisch gefundenen Barbarendörfern gefarmt werden sollen. **Vorsicht:** Der Bot prüft nicht, wem diese Dörfer gehören!
-*   `"gather_enabled"`: Wenn `true`, schickt der Bot Truppen zum Sammeln, wenn sie nicht für Angriffe oder Farmen gebraucht werden.
-*   `"gather_selection"`: Die maximale Stufe der Sammel-Operationen (1-4). Höhere Stufen bringen mehr Ressourcen, müssen aber zuerst freigeschaltet werden.
-*   `"advanced_gather"`: Wenn `true` (Standard), weist der Bot alle verfügbaren Truppen intelligent den höchsten Sammel-Operationen zu, um maximale Effizienz zu erreichen.
-*   `"prioritize_gathering"`: Wenn `true`, führt der Bot Sammel-Operationen **vor** dem Farmen aus. Standard ist `false` (Farmen hat Vorrang). Nützlich, wenn du die Ressourcensammlung maximieren möchtest.
-*   **Auto-Unlock von Sammel-Optionen**: Der Bot schaltet automatisch höhere Sammel-Slots (2, 3, 4) frei, wenn genügend Ressourcen vorhanden sind. Dabei prüft er die Kosten, fordert bei Bedarf Ressourcen vom Balancer an und nutzt die neuen Slots sofort nach dem Freischalten.
+| Parameter | Beschreibung | Wert |
+|-----------|--------------|------|
+| `active_hours` | Aktive Stunden | `"6-23"` (06:00-23:00 Uhr) |
+| `active_delay` | Wartezeit zwischen Aktionen (aktiv) | Sekunden |
+| `inactive_delay` | Wartezeit zwischen Aktionen (inaktiv) | Sekunden |
+| `inactive_still_active` | Aktionen auch im inaktiven Modus? | `true` / `false` |
+| `add_new_villages` | Neue Dörfer automatisch hinzufügen? | `true` / `false` |
+| `user_agent` | ⚠️ Browser-User-Agent (wichtig!) | Dein User-Agent |
+| `farm_bag_limit_margin` | Sicherheitsabstand zum Beutelimit | `0.0` - `0.2` |
 
 ---
 
-### `farms`
-Einstellungen für den Farm-Manager.
+### 🏗️ `building` - Gebäudemanager
 
-*   `"farm"`: Globaler Schalter. Wenn `true`, ist das Farmen aktiviert.
-*   `"search_radius"`: Der Radius (in Feldern) um deine Dörfer, in dem nach Barbarendörfern gesucht wird.
-*   `"default_away_time"`: Standard-Wartezeit (in Sekunden) bis zum nächsten Angriff auf eine Farm.
-*   `"full_loot_away_time"`: Kürzere Wartezeit für Farmen, die beim letzten Angriff volle Beute gebracht haben.
-*   `"low_loot_away_time"`: Längere Wartezeit für Farmen mit geringer Beute (wird vom Bot automatisch verwaltet).
-*   `"max_farms"`: Die maximale Anzahl an Farmen, die ein Dorf gleichzeitig verwalten soll.
-*   `"forced_peace_times"`: Eine Liste von Zeiträumen, in denen nicht angegriffen wird (z.B. an Feiertagen).
+| Parameter | Beschreibung |
+|-----------|--------------|
+| `manage_buildings` | Gebäudeverwaltung aktiviert |
+| `default` | Standard-Bauvorlage (aus `templates/builder/`) |
+| `max_lookahead` | Max. überspringbare Gebäude (empfohlen: < 5) |
+| `max_queued_items` | Max. Gebäude in der Bauschleife |
 
 ---
 
-### `market`
-Einstellungen für den Marktplatz.
+### ⚔️ `units` - Truppenrekrutierung
 
-*   `"auto_trade"`: Wenn `true`, erstellt der Bot automatisch Angebote auf dem Marktplatz, um Ressourcen auszugleichen.
-*   `"max_trade_duration"`: Maximale Laufzeit für Angebote in Stunden.
-*   `"trade_multiplier"`: Wenn `true`, versucht der Bot, ungleiche Tauschgeschäfte zu einem besseren Kurs zu erstellen (z.B. 900 Lehm für 1000 Holz anbieten).
-
-### `balancer`
-Steuert den Ressourcenkoordinator zwischen deinen eigenen Dörfern.
-
-*   `"enabled"`: Aktiviert den Koordinator. In Kombination mit `"dry_run": true` kannst du die Planung gefahrlos testen.
-*   `"mode"`: Strategie (`"requests_only"`, `"requests_first"`, `"balance_even"`). Aktuell arbeiten `requests_only` und `requests_first` identisch.
-*   `"needs_more_pct"`: Anteil der Lagerkapazität, bis zu dem ein Ziel aufgefüllt werden darf (z.B. `0.85` = 85 %).
-*   `"built_out_pct"`: Mindestpuffer, den Spender behalten müssen (als Anteil ihres Lagers).
-*   `"max_shipments_per_run"`: Deckelung der Bestellungen pro Balancer-Lauf.
-*   `"min_chunk"`: Kleinste Versandgröße pro Ressource (in Rohstoffen). Normalerweise 1000 – entspricht einem Händler.
-*   `"transfer_cooldown_min"`: Sperrzeit in Minuten für wiederholte Lieferungen auf derselben Route. `0` deaktiviert die Sperre (Ledger hält dann die letzten 200 Einträge).
-*   `"block_when_under_attack"`: Schließt angegriffene Dörfer aus.
-*   `"dry_run"`: Bei `true` werden nur Log-Einträge erzeugt, keine Händler losgeschickt.
-
-Per-Dorf-Override: In `villages.<id>.balancer_enabled` kannst du einzelne Dörfer ein- oder ausschließen.
+| Parameter | Beschreibung |
+|-----------|--------------|
+| `recruit` | Rekrutierung aktiviert |
+| `upgrade` | Automatische Forschung |
+| `default` | Standard-Truppenvorlage (aus `templates/troops/`) |
+| `batch_size` | Einheiten pro Rekrutierung (Lategame: 500-1500) |
+| `manage_defence` | Verteidigungsmanagement aktiviert |
 
 ---
 
-### `world`
-Diese Optionen werden vom Bot normalerweise automatisch erkannt und gesetzt.
+### 🏘️ `village_template` - Dorf-Vorlage
 
-*   `"knight_enabled"`, `"flags_enabled"`, `"quests_enabled"`, etc.: `true` oder `false`, je nachdem, welche Features die Spielwelt hat.
-*   `"farm_bag_limit_enabled"`: Aktiviert den Farm-Beutelimit-Schutz für alle Dörfer (sofern kein Dorf-Override gesetzt ist).
-*   `"farm_bag_block_scouts"`: Falls `true`, werden auch Scout-Läufe gestoppt, sobald das Limit erreicht ist.
+Diese Vorlage wird für neu hinzugefügte Dörfer verwendet. Jedes Dorf kann individuell überschrieben werden.
+
+| Parameter | Beschreibung | Standard |
+|-----------|--------------|----------|
+| `building` | Bauvorlage für dieses Dorf | Übernimmt global |
+| `units` | Truppenvorlage für dieses Dorf | Übernimmt global |
+| `managed` | Dorf vom Bot verwalten? | `true` |
+| `prioritize_building` | Rekrutierung pausieren bis Bauschleife voll? | `false` |
+| `prioritize_snob` | Ressourcen für AGs reservieren? | `false` |
+| `snobs` | Max. Anzahl AGs | `0` |
+| `farm_bag_limit_override` | Beutelimit-Override | `null` (global) |
+| `additional_farms` | Zusätzliche Farm-IDs | `[]` |
+
+#### 🔍 Sammel-Optionen (Scavenger)
+
+| Parameter | Beschreibung |
+|-----------|--------------|
+| `gather_enabled` | Ressourcensammlung aktiviert |
+| `gather_selection` | Max. Sammel-Stufe (1-4) |
+| `advanced_gather` | Intelligente Truppen-Zuweisung |
+| `prioritize_gathering` | Sammeln vor Farmen? |
+
+> 🔓 **Auto-Unlock:** Der Bot schaltet höhere Sammel-Slots automatisch frei!
 
 ---
 
-### `reporting` & `notifications`
-Einstellungen für Logging und Benachrichtigungen.
+### 🌾 `farms` - Farm-Manager
 
-*   `"reporting"`:
-    *   `"enabled"`: Wenn `true`, wird ein detailliertes Log geschrieben.
-    *   `"connection_string"`: Der Speicherort. Standardmäßig `file://cache/logs/twb_{ts}.log`.
-*   `"notifications"`:
-    *   `"enabled"`: Wenn `true`, werden Benachrichtigungen via Telegram gesendet.
-    *   `"channel_id"`: Deine Telegram Chat-ID.
-    *   `"token"`: Der Token deines Telegram-Bots.
+| Parameter | Beschreibung |
+|-----------|--------------|
+| `farm` | Farming aktiviert |
+| `search_radius` | Suchradius für Barbarendörfer (Felder) |
+| `default_away_time` | Standard-Wartezeit zwischen Angriffen (Sekunden) |
+| `full_loot_away_time` | Wartezeit bei voller Beute |
+| `low_loot_away_time` | Wartezeit bei geringer Beute |
+| `max_farms` | Max. Farmen pro Dorf |
+| `forced_peace_times` | Zeiträume ohne Angriffe |
 
-## Funktionsweise (Wie es funktioniert)
+---
 
-Dieser Abschnitt gibt einen Einblick in die internen Abläufe des Bots.
+### 🏪 `market` - Marktplatz
 
-### Login und Anti-Captcha
+| Parameter | Beschreibung |
+|-----------|--------------|
+| `auto_trade` | Automatische Marktplatz-Angebote |
+| `max_trade_duration` | Max. Angebotsdauer (Stunden) |
+| `trade_multiplier` | Ungleiche Tauschgeschäfte erstellen |
+
+---
+
+### ⚖️ `balancer` - Ressourcen-Koordinator
+
+| Parameter | Beschreibung |
+|-----------|--------------|
+| `enabled` | Balancer aktiviert |
+| `mode` | Strategie (`requests_only`, `requests_first`, `balance_even`) |
+| `needs_more_pct` | Max. Auffüllung (% der Lagerkapazität) |
+| `built_out_pct` | Min. Puffer für Spender (% des Lagers) |
+| `max_shipments_per_run` | Max. Bestellungen pro Lauf |
+| `min_chunk` | Min. Versandgröße (entspricht 1 Händler = 1000) |
+| `transfer_cooldown_min` | Sperrzeit für Route (Minuten, 0 = deaktiviert) |
+| `block_when_under_attack` | Angegriffene Dörfer ausschließen |
+| `dry_run` | Test-Modus (nur Logs, keine Händler) |
+
+> 💡 **Tipp:** Teste mit `dry_run: true` bevor du den Balancer aktivierst!
+
+> ℹ️ **Per-Dorf-Override:** In `villages.<id>.balancer_enabled` kannst du einzelne Dörfer ein- oder ausschließen.
+
+---
+
+### 🌍 `world` - Welt-Einstellungen
+
+Werden automatisch erkannt und gesetzt:
+
+- `knight_enabled`, `flags_enabled`, `quests_enabled`
+- `farm_bag_limit_enabled` - Farm-Beutelimit-Schutz
+- `farm_bag_block_scouts` - Scout-Läufe bei Limit stoppen
+
+---
+
+### 📊 `reporting` & 📱 `notifications`
+
+#### Logging
+- `enabled` - Detailliertes Log aktivieren
+- `connection_string` - Speicherort (Standard: `file://cache/logs/twb_{ts}.log`)
+
+#### Telegram-Benachrichtigungen
+- `enabled` - Benachrichtigungen aktivieren
+- `channel_id` - Deine Telegram Chat-ID
+- `token` - Telegram-Bot-Token
+
+</details>
+
+---
+
+## 🔧 Funktionsweise (Wie es funktioniert)
+
+<details>
+<summary><b>⚙️ Interne Abläufe des Bots</b></summary>
+
+### 🔐 Login und Anti-Captcha
 
 "Die Stämme" schützt den normalen Login-Vorgang mit einem ReCaptcha, was eine Automatisierung erschwert. TWB umgeht dieses Problem auf elegante Weise: Anstatt sich mit Benutzername und Passwort anzumelden, verwendet der Bot eine **gültige Sitzungs-Cookie**.
 
 **Wie funktioniert das?**
-1.  Du loggst dich normal im Browser in deinen Account ein.
-2.  Dein Browser erhält vom Spieleserver ein Cookie, das deine Sitzung identifiziert.
-3.  Du kopierst den Wert dieses Cookies und fügst ihn beim ersten Start des Bots ein.
-4.  Der Bot sendet dieses Cookie bei jeder Anfrage an den Server und erscheint so, als wäre er ein ganz normaler, eingeloggter Browser.
+1. Du loggst dich normal im Browser in deinen Account ein.
+2. Dein Browser erhält vom Spieleserver ein Cookie, das deine Sitzung identifiziert.
+3. Du kopierst den Wert dieses Cookies und fügst ihn beim ersten Start des Bots ein.
+4. Der Bot sendet dieses Cookie bei jeder Anfrage an den Server und erscheint so, als wäre er ein ganz normaler, eingeloggter Browser.
 
-**Wichtig:** Diese Cookies haben eine begrenzte Lebensdauer. Um zu vermeiden, dass der Bot plötzlich ausgeloggt wird, solltest du dich **mindestens 1-2 Mal pro Tag im Browser neu einloggen** und dem Bot bei Aufforderung ein frisches Cookie zur Verfügung stellen. Ein 24/7-Betrieb mit einem einzigen Cookie ist ein hohes Risiko für eine Sperre.
+> ⚠️ **Wichtig:** Diese Cookies haben eine begrenzte Lebensdauer. Um zu vermeiden, dass der Bot plötzlich ausgeloggt wird, solltest du dich **mindestens 1-2 Mal pro Tag im Browser neu einloggen** und dem Bot bei Aufforderung ein frisches Cookie zur Verfügung stellen. Ein 24/7-Betrieb mit einem einzigen Cookie ist ein hohes Risiko für eine Sperre.
 
-### Der Hauptprozess (`twb.py`)
+---
+
+### 🔄 Der Hauptprozess (`twb.py`)
 
 Der Bot operiert in einer Endlosschleife, die bei jedem Durchlauf folgende Schritte ausführt:
-1.  **Prüfung der aktiven Stunden:** Der Bot prüft, ob er sich in den in der Konfiguration definierten `"active_hours"` befindet.
-2.  **Internet-Check:** Eine kurze Prüfung, ob eine Internetverbindung besteht.
-3.  **Konfiguration laden:** Die `config.json` wird neu eingelesen, um Änderungen zu übernehmen.
-4.  **Übersicht abrufen:** Der Bot lädt die Dorf-Übersichtsseite. Dadurch erkennt er die aktuell verfügbaren Dörfer und die Welteinstellungen (z.B. ob Ritter oder Flaggen aktiv sind).
-5.  **Dörfer durchlaufen:** Der Bot iteriert durch jedes in der `config.json` als `"managed": true` markierte Dorf und führt die entsprechenden Aktionen aus (Bauen, Rekrutieren, Farmen etc.).
-6.  **Farm-Manager ausführen:** Nach dem Durchlauf aller Dörfer wird der globale Farm-Manager (`farm_manager`) aufgerufen, um die Farm-Statistiken zu analysieren und zu optimieren.
-7.  **Pause:** Der Bot pausiert für die in `"active_delay"` oder `"inactive_delay"` definierte Zeit, plus eine zufällige Spanne, um menschliches Verhalten zu simulieren.
 
-### Automatisches Farm-Management (`manager.py`)
+```mermaid
+graph TD
+    A[Start] --> B{Aktive Stunden?}
+    B -->|Ja| C[Internet-Check]
+    B -->|Nein| D[Inaktiver Modus]
+    C --> E[Konfiguration laden]
+    E --> F[Übersicht abrufen]
+    F --> G[Dörfer durchlaufen]
+    G --> H[Farm-Manager ausführen]
+    H --> I[Pause]
+    I --> B
+    D --> I
+```
+
+1. **Prüfung der aktiven Stunden:** Der Bot prüft, ob er sich in den in der Konfiguration definierten `"active_hours"` befindet.
+2. **Internet-Check:** Eine kurze Prüfung, ob eine Internetverbindung besteht.
+3. **Konfiguration laden:** Die `config.json` wird neu eingelesen, um Änderungen zu übernehmen.
+4. **Übersicht abrufen:** Der Bot lädt die Dorf-Übersichtsseite. Dadurch erkennt er die aktuell verfügbaren Dörfer und die Welteinstellungen (z.B. ob Ritter oder Flaggen aktiv sind).
+5. **Dörfer durchlaufen:** Der Bot iteriert durch jedes in der `config.json` als `"managed": true` markierte Dorf und führt die entsprechenden Aktionen aus (Bauen, Rekrutieren, Farmen etc.).
+6. **Farm-Manager ausführen:** Nach dem Durchlauf aller Dörfer wird der globale Farm-Manager (`farm_manager`) aufgerufen, um die Farm-Statistiken zu analysieren und zu optimieren.
+7. **Pause:** Der Bot pausiert für die in `"active_delay"` oder `"inactive_delay"` definierte Zeit, plus eine zufällige Spanne, um menschliches Verhalten zu simulieren.
+
+---
+
+### 📊 Automatisches Farm-Management (`manager.py`)
 
 Eine der stärksten Funktionen des Bots ist die selbstständige Optimierung der Farm-Effizienz. Dies geschieht durch die Analyse der im `cache/reports/` Ordner gespeicherten Berichte.
 
+| Profil | Kriterium | Aktion |
+|--------|-----------|--------|
+| 🟢 **High Profile** | Konstant hohe Beute | Häufigere Angriffe |
+| 🟡 **Low Profile** | Geringe Beute oder leichte Verluste | Längere Pausen |
+| 🔴 **Unsicher** | Konstant hohe Verluste (>50%) | Nicht mehr angreifen |
+
 *   **Analyse:** Der `farm_manager` berechnet für jede Farm die durchschnittliche Beute und die prozentualen Truppenverluste.
-*   **Profil-Anpassung:**
-    *   Farmen mit konstant hoher Beute werden als `"high_profile"` markiert und häufiger angegriffen.
-    *   Farmen mit geringer Beute oder leichten Verlusten werden als `"low_profile"` markiert, und die Pause bis zum nächsten Angriff wird erhöht.
+*   **Profil-Anpassung:** Farmen mit konstant hoher Beute werden als `"high_profile"` markiert und häufiger angegriffen, während Farmen mit geringer Beute oder leichten Verlusten als `"low_profile"` markiert werden, und die Pause bis zum nächsten Angriff wird erhöht.
 *   **Sicherheits-Check:** Wenn eine Farm konstant hohe Verluste (>50%) verursacht, wird sie als unsicher (`"safe": false`) markiert und nicht mehr automatisch angegriffen.
 
-### Das Web-Interface
+---
+
+### 🖥️ Das Web-Interface
 
 TWB enthält ein optionales Web-Interface, das eine visuelle Übersicht über den Bot-Status bietet.
-1.  Navigiere in deiner Kommandozeile in das `webmanager` Verzeichnis: `cd webmanager`
-2.  Starte den Server: `python server.py`
-3.  Öffne deinen Browser und gehe zu `http://127.0.0.1:5000/`, um das Dashboard zu sehen.
 
-### Automatische Konfigurations-Aktualisierung
+```bash
+# Navigiere in das webmanager Verzeichnis
+cd webmanager
+
+# Starte den Server
+python server.py
+```
+
+Öffne deinen Browser und gehe zu `http://127.0.0.1:5000/`, um das Dashboard zu sehen.
+
+---
+
+### 🔄 Automatische Konfigurations-Aktualisierung
 
 Wenn der Bot aktualisiert wird und neue Konfigurations-Optionen in der `config.example.json` hinzukommen, erkennt TWB dies automatisch. Deine bestehende `config.json` wird gesichert (`config.bak`) und die neuen Optionen werden intelligent hinzugefügt, **ohne deine bisherigen Einstellungen zu überschreiben**. Dies stellt sicher, dass deine Konfiguration immer auf dem neuesten Stand ist, ohne dass du sie manuell anpassen musst.
 
-## FAQ (Häufig gestellte Fragen)
+</details>
 
-**F: Wie bekomme ich das Browser-Cookie?**
+---
 
-A: Das Cookie findest du in den Entwicklertools deines Browsers (Taste F12).
-1.  Gehe zum "Netzwerk" (oder "Network") Tab.
-2.  Lade die Spielseite neu (F5).
-3.  Suche nach einer Anfrage, die `game.php` heißt.
-4.  Klicke darauf und suche in den "Anfrage-Headern" (Request Headers) nach dem `cookie:` Eintrag. Kopiere den gesamten Wert.
+## ❓ FAQ (Häufig gestellte Fragen)
+
+<details>
+<summary><b>🔑 Wie bekomme ich das Browser-Cookie?</b></summary>
+
+Das Cookie findest du in den Entwicklertools deines Browsers (Taste **F12**).
+
+1. Gehe zum **"Netzwerk"** (oder "Network") Tab.
+2. Lade die Spielseite neu (**F5**).
+3. Suche nach einer Anfrage, die `game.php` heißt.
+4. Klicke darauf und suche in den **"Anfrage-Headern"** (Request Headers) nach dem `cookie:` Eintrag. Kopiere den gesamten Wert.
 
 ![Screenshot, der den Cookie-Header in den Chrome-Entwicklertools zeigt](readme/network.JPG)
 
-**F: Was soll ich tun, wenn der Bot abstürzt?**
+</details>
 
-A: Der Bot ist so konzipiert, dass er sich nach einem Absturz bis zu dreimal selbst neu startet. Wenn er dauerhaft abstürzt, überprüfe die Log-Dateien im `cache/logs/` Ordner. Dort findest du detaillierte Fehlermeldungen, die dir (oder der Community im Discord) helfen können, das Problem zu diagnostizieren.
+<details>
+<summary><b>🔴 Was soll ich tun, wenn der Bot abstürzt?</b></summary>
 
-**F: Wie hoch ist das Risiko, gesperrt zu werden?**
+Der Bot ist so konzipiert, dass er sich nach einem Absturz bis zu **dreimal selbst neu startet**.
 
-A: Das Risiko ist real und sollte nicht unterschätzt werden. Um es zu minimieren:
-*   Verwende realistische Pausenzeiten (`active_delay`).
-*   Nutze die `"active_hours"`, um eine "Schlafenszeit" für den Bot zu simulieren.
-*   Aktualisiere dein Cookie regelmäßig.
-*   Vermeide es, den Bot auf brandneuen Welten oder mit einem neuen Account zu aggressiv zu nutzen.
+Wenn er dauerhaft abstürzt, überprüfe die Log-Dateien im `cache/logs/` Ordner. Dort findest du detaillierte Fehlermeldungen, die dir (oder der Community im Discord) helfen können, das Problem zu diagnostizieren.
 
-**F: Wie aktualisiere ich den Bot auf eine neue Version?**
+</details>
 
-A: Wenn du `git` verwendest, führe einfach `git pull` im Bot-Verzeichnis aus. Wenn du die ZIP-Datei heruntergeladen hast, lade die neue Version herunter, entpacke sie und kopiere deine `config.json` in den neuen Ordner. Dank der automatischen Konfigurations-Aktualisierung bleiben deine Einstellungen erhalten.
+<details>
+<summary><b>⚠️ Wie hoch ist das Risiko, gesperrt zu werden?</b></summary>
 
-## Verbesserungsvorschläge
+Das Risiko ist **real** und sollte nicht unterschätzt werden. Um es zu minimieren:
+
+- ✅ Verwende realistische Pausenzeiten (`active_delay`).
+- ✅ Nutze die `"active_hours"`, um eine "Schlafenszeit" für den Bot zu simulieren.
+- ✅ Aktualisiere dein Cookie regelmäßig.
+- ✅ Vermeide es, den Bot auf brandneuen Welten oder mit einem neuen Account zu aggressiv zu nutzen.
+
+</details>
+
+<details>
+<summary><b>🔄 Wie aktualisiere ich den Bot auf eine neue Version?</b></summary>
+
+**Mit Git:**
+```bash
+git pull
+```
+
+**Ohne Git:**
+1. Lade die neue Version herunter
+2. Entpacke sie
+3. Kopiere deine `config.json` in den neuen Ordner
+
+> 💡 Dank der automatischen Konfigurations-Aktualisierung bleiben deine Einstellungen erhalten!
+
+</details>
+
+---
+
+## 💡 Verbesserungsvorschläge
 
 Dieses Projekt hat eine solide Basis, aber es gibt immer Raum für Weiterentwicklungen. Hier sind einige Ideen:
 
-*   **Erweiterte Anti-Bot-Erkennungsmuster:** Implementierung von zufälligeren Klickpfaden, variableren Timings und Mausbewegungs-Simulation (z.B. über eine Browser-Automatisierungs-Bibliothek wie Selenium oder Playwright), um die Erkennung weiter zu erschweren.
-*   **Ausbau des Web-Interface:** Das Web-UI könnte um interaktive Elemente erweitert werden, z.B. das Ändern von Konfigurationen, das manuelle Starten von Bauaufträgen oder das Einsehen von detaillierten Dorf-Statistiken direkt im Browser.
-*   **Multi-Account-Unterstützung:** Die Architektur könnte erweitert werden, um mehrere Accounts (z.B. auf unterschiedlichen Welten) gleichzeitig von einer einzigen Bot-Instanz aus zu verwalten.
-*   **Vorlagen-Editor:** Ein Tool oder ein Bereich im Web-UI, der das Erstellen und Anpassen von Bau- und Truppenvorlagen vereinfacht, anstatt Textdateien manuell bearbeiten zu müssen.
+| Kategorie | Vorschlag |
+|-----------|-----------|
+| 🔒 **Anti-Bot-Erkennung** | Implementierung von zufälligeren Klickpfaden, variableren Timings und Mausbewegungs-Simulation (z.B. über Selenium oder Playwright) |
+| 🖥️ **Web-Interface** | Interaktive Elemente zum Ändern von Konfigurationen, manuelles Starten von Bauaufträgen oder detaillierte Dorf-Statistiken |
+| 👥 **Multi-Account** | Verwaltung mehrerer Accounts (z.B. auf unterschiedlichen Welten) von einer einzigen Bot-Instanz |
+| ✏️ **Vorlagen-Editor** | Tool oder Web-UI-Bereich zum Erstellen und Anpassen von Bau- und Truppenvorlagen |
 
-## Lizenz
+---
 
-Dieses Projekt steht unter der GNU General Public License v3.0. Details findest du in der `LICENSE.md` Datei.
+## 📄 Lizenz
+
+Dieses Projekt steht unter der **GNU General Public License v3.0**. Details findest du in der [LICENSE.md](LICENSE.md) Datei.
+
+---
+
+<div align="center">
+
+**Made with ❤️ by the TWB Community**
+
+[⬆ Zurück nach oben](#-tribal-wars-bot-twb)
+
+</div>

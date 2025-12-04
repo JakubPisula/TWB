@@ -57,6 +57,20 @@ Für Hilfe, Diskussionen und den Austausch mit anderen Nutzern gibt es einen [**
 - 📈 **Adaptive Pausen:** Längere Pausen für Dörfer mit wenig Beute oder hohen Verlusten
 - 🔒 **Beutelimit-Schutz:** Überwacht das weltweite Farm-Beutelimit und verhindert weitere Befehle bei Erreichen
 
+#### 🚀 Smart Farming (NEU)
+
+Das Smart Farming Feature ersetzt fehlende Template-Truppen intelligent durch verfügbare Einheiten:
+
+| Funktion | Beschreibung |
+|----------|--------------|
+| 🎯 **Kapazitäts-basiert** | Berechnet die Ziel-Ladekapazität aus dem Template |
+| 🔄 **Automatische Ersetzung** | Ersetzt nicht-verfügbare Truppen durch Alternativen |
+| ⚡ **Prioritäts-System** | Bevorzugt effiziente Einheiten (Leichte Kavallerie > Späher > Axtkämpfer) |
+| ⚙️ **Konfigurierbar** | Prioritätenliste in `smart_farming_priority` anpassbar |
+
+**Beispiel:** Template fordert 20 Axtkämpfer (200 Kapazität), aber nur 10 verfügbar?
+→ Smart Farming nimmt 10 Axtkämpfer + 4 Speerträger = gleiche Beute-Kapazität!
+
 ### 💰 Ressourcen-Management
 
 #### 🏪 Marktplatz-Manager
@@ -228,6 +242,22 @@ Diese Vorlage wird für neu hinzugefügte Dörfer verwendet. Jedes Dorf kann ind
 | `low_loot_away_time` | Wartezeit bei geringer Beute |
 | `max_farms` | Max. Farmen pro Dorf |
 | `forced_peace_times` | Zeiträume ohne Angriffe |
+
+#### 🚀 Smart Farming Konfiguration
+
+| Parameter | Beschreibung | Standard |
+|-----------|--------------|----------|
+| `smart_farming` | Smart Farming aktiviert | `false` |
+| `smart_farming_priority` | Prioritätenliste der Ersatz-Einheiten | `["light", "marcher", "heavy", "spear", "axe", "sword", "archer"]` |
+
+> 💡 **Wie funktioniert Smart Farming?**
+>
+> Wenn dein Farm-Template z.B. 20 Axtkämpfer fordert, aber nur 10 verfügbar sind:
+> 1. **Phase 1:** Nimmt die 10 verfügbaren Axtkämpfer (100 Kapazität)
+> 2. **Phase 2:** Füllt die fehlende Kapazität (100) mit Prioritäts-Einheiten auf
+> 3. **Ergebnis:** 10 Axtkämpfer + 4 Speerträger = 200 Kapazität (wie ursprünglich gewollt)
+>
+> Die Prioritätenliste bestimmt, welche Einheiten bevorzugt werden. Leichte Kavallerie (`light`) hat 80 Kapazität und ist daher effizienter als Speerträger (`spear`) mit 25.
 
 ---
 

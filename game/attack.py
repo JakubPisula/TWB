@@ -120,11 +120,9 @@ class AttackManager:
 
         # Calculate target capacity from template
         target_capacity = 0
-        template_units = {}
         for unit, count in template.items():
             capacity = self.troopmanager.carry_capacity.get(unit, 0)
-            target_capacity += capacity * count
-            template_units[unit] = count
+            target_capacity += capacity * int(count)
 
         if target_capacity == 0:
             return template
@@ -137,7 +135,8 @@ class AttackManager:
         current_load = 0
 
         # Phase 1: Use template units first
-        for unit, count in template_units.items():
+        for unit, count in template.items():
+            count = int(count)
             if unit in available_troops and available_troops[unit] > 0:
                 take = min(available_troops[unit], count)
                 if take > 0:

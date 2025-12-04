@@ -122,9 +122,6 @@ class AttackManager:
         target_capacity = 0
         template_units = {}
         for unit, count in template.items():
-            if unit == "knight":
-                template_units[unit] = count
-                continue
             capacity = self.troopmanager.carry_capacity.get(unit, 0)
             target_capacity += capacity * count
             template_units[unit] = count
@@ -189,13 +186,13 @@ class AttackManager:
             self.logger.debug("Skipping farm target because farm bag limit was reached earlier")
             return 0
 
+        smart_template = None
         if self.smart_farming:
             smart_template = self.get_smart_troops(template)
-            if smart_template:
-                template = smart_template
-                missing = False
-            else:
-                missing = self.enough_in_village(template)
+
+        if smart_template:
+            template = smart_template
+            missing = False
         else:
             missing = self.enough_in_village(template)
 

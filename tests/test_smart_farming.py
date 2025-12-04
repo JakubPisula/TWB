@@ -79,5 +79,18 @@ class TestSmartFarming(unittest.TestCase):
 
         self.assertEqual(result.get("spear"), 5)
 
+    def test_smart_fill_with_knight(self):
+        # Template: 10 Spear (250) + 1 Knight (100) = 350 Capacity
+        # Have: 0 Knight, 0 Spear, 100 Light (80)
+        # Expected: ~5 Light (400) or 4 Light (320) + 1 Light = 5
+        # 350 / 80 = 4.375 -> 5 Light.
+
+        template = {"spear": 10, "knight": 1}
+        self.tm.troops = {"spear": "0", "knight": "0", "light": "100"}
+
+        result = self.am.get_smart_troops(template)
+
+        self.assertEqual(result.get("light"), 5)
+
 if __name__ == '__main__':
     unittest.main()

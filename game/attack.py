@@ -53,6 +53,9 @@ class AttackManager:
     farm_default_wait = 3600
     farm_low_prio_wait = 7200
 
+    smart_farming = False
+    smart_farming_priority = []
+
     def __init__(self, wrapper=None, village_id=None, troopmanager=None, map=None):
         """
         Create the attack manager
@@ -108,6 +111,75 @@ class AttackManager:
                 if out_res == -1:
                     break
 
+    def get_smart_troops(self, template):
+        """
+        Calculates the troop composition based on loot capacity
+        """
+        if not self.troopmanager or not hasattr(self.troopmanager, "carry_capacity"):
+            return None
+
+        # Calculate target capacity from template
+        target_capacity = 0
+        template_units = {}
+        for unit, count in template.items():
+            if unit == "knight":
+                template_units[unit] = count
+                continue
+            capacity = self.troopmanager.carry_capacity.get(unit, 0)
+            target_capacity += capacity * count
+            template_units[unit] = count
+
+        if target_capacity == 0:
+            return template
+
+        available_troops = {}
+        for unit, count_str in self.troopmanager.troops.items():
+            available_troops[unit] = int(count_str)
+
+        smart_troops = {}
+        current_load = 0
+
+        # Phase 1: Use template units first
+        for unit, count in template_units.items():
+            if unit in available_troops and available_troops[unit] > 0:
+                take = min(available_troops[unit], count)
+                if take > 0:
+                    smart_troops[unit] = take
+                    current_load += take * self.troopmanager.carry_capacity.get(unit, 0)
+                    available_troops[unit] -= take
+
+        # Phase 2: Fill gap
+        if current_load < target_capacity:
+            remaining_load = target_capacity - current_load
+            priority_list = self.smart_farming_priority or ["light", "marcher", "heavy", "spear", "axe", "sword", "archer"]
+
+            for unit in priority_list:
+                if remaining_load <= 0:
+                    break
+
+                if unit in available_troops and available_troops[unit] > 0:
+                    capacity = self.troopmanager.carry_capacity.get(unit, 0)
+                    if capacity <= 0:
+                        continue
+
+                    needed = int(remaining_load / capacity)
+                    if remaining_load % capacity != 0:
+                        needed += 1  # Round up
+
+                    take = min(available_troops[unit], needed)
+                    if take > 0:
+                        smart_troops[unit] = smart_troops.get(unit, 0) + take
+                        added_load = take * capacity
+                        current_load += added_load
+                        remaining_load -= added_load
+                        available_troops[unit] -= take
+
+        # If we have no troops selected, return None (fail)
+        if not smart_troops:
+            return None
+
+        return smart_troops
+
     def send_farm(self, target, template):
         """
         Send a farming run
@@ -116,7 +188,17 @@ class AttackManager:
         if self.farm_bag_limit_enabled and self._farm_bag_limit_reached:
             self.logger.debug("Skipping farm target because farm bag limit was reached earlier")
             return 0
-        missing = self.enough_in_village(template)
+
+        if self.smart_farming:
+            smart_template = self.get_smart_troops(template)
+            if smart_template:
+                template = smart_template
+                missing = False
+            else:
+                missing = self.enough_in_village(template)
+        else:
+            missing = self.enough_in_village(template)
+
         if not missing:
             cached = self.can_attack(vid=target["id"], clear=False)
             if cached:

@@ -496,6 +496,14 @@ class Village:
         except (TypeError, ValueError):
             margin = 0.02
         self.attack.farm_bag_limit_margin = max(0.0, min(0.2, margin))
+
+        self.attack.smart_farming = self.get_config(
+            section="farms", parameter="smart_farming", default=False
+        )
+        self.attack.smart_farming_priority = self.get_config(
+            section="farms", parameter="smart_farming_priority", default=[]
+        )
+
         if self.current_unit_entry:
             self.attack.template = self.current_unit_entry["farm"]
 

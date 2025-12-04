@@ -62,6 +62,21 @@ class TroopManager:
     resman = None
     template = None
 
+    carry_capacity = {
+        "spear": 25,
+        "sword": 15,
+        "axe": 10,
+        "archer": 10,
+        "spy": 0,
+        "light": 80,
+        "marcher": 50,
+        "heavy": 50,
+        "ram": 0,
+        "catapult": 0,
+        "knight": 100,
+        "snob": 0,
+    }
+
     def __init__(self, wrapper=None, village_id=None):
         """
         Create the troop manager
@@ -490,15 +505,16 @@ class TroopManager:
         self.logger.info(f"Starting gather with self.troops: {self.troops}")
         self.logger.info(f"Local troops copy: {troops}")
 
-        haul_dict = [
-            "spear:25",
-            "sword:15",
-            "heavy:50",
-            "axe:10",
-            "light:80"
+        # Use class-level carry capacity but filter for gatherable units
+        haul_list = [
+            "spear",
+            "sword",
+            "heavy",
+            "axe",
+            "light"
         ]
         if "archer" in self.total_troops:
-            haul_dict.extend(["archer:10", "marcher:50"])
+            haul_list.extend(["archer", "marcher"])
 
         # ADVANCED GATHER: Prioritize highest gathering operations by assigning maximum troops to them first
 
@@ -508,15 +524,15 @@ class TroopManager:
             
             # Calculate total carry capacity for logging
             total_carry = 0
-            for item in haul_dict:
-                item, carry = item.split(":")
+            for item in haul_list:
+                carry = self.carry_capacity.get(item, 0)
                 if item == "knight":
                     continue
                 if item in disabled_units:
                     self.logger.debug(f"Skipping {item} - in disabled_units")
                     continue
                 if item in troops and int(troops[item]) > 0:
-                    carry_contribution = int(carry) * int(troops[item])
+                    carry_contribution = carry * int(troops[item])
                     total_carry += carry_contribution
                     self.logger.debug(f"Unit {item}: {troops[item]} units * {carry} carry = {carry_contribution} total carry")
                 else:
@@ -542,8 +558,8 @@ class TroopManager:
                     total_carry_for_operation = 0
                     troops_assigned = False
                     
-                    for item in haul_dict:
-                        item, carry = item.split(":")
+                    for item in haul_list:
+                        carry = self.carry_capacity.get(item, 0)
                         if item == "knight":
                             continue
                         if item in disabled_units:
@@ -553,7 +569,7 @@ class TroopManager:
                             troops_count = int(troops[item])
                             # Assign all troops of this type to the current operation
                             payload["squad_requests[0][candidate_squad][unit_counts][%s]" % item] = str(troops_count)
-                            total_carry_for_operation += int(carry) * troops_count
+                            total_carry_for_operation += carry * troops_count
                             self.logger.debug(f"Assigned {troops_count} {item} to gather operation {available_selection}")
                             # Remove these troops from the pool
                             troops[item] = 0
@@ -613,8 +629,8 @@ class TroopManager:
                         "squad_requests[0][use_premium]": "false",
                     }
                     total_carry = 0
-                    for item in haul_dict:
-                        item, carry = item.split(":")
+                    for item in haul_list:
+                        carry = self.carry_capacity.get(item, 0)
                         if item == "knight":
                             continue
                         if item in disabled_units:
@@ -623,7 +639,7 @@ class TroopManager:
                             payload[
                                 "squad_requests[0][candidate_squad][unit_counts][%s]" % item
                                 ] = troops[item]
-                            total_carry += int(carry) * int(troops[item])
+                            total_carry += carry * int(troops[item])
                             self.logger.debug(f"Assigned {troops[item]} {item} to gather operation {available_selection}")
                         else:
                             payload[
@@ -642,8 +658,7 @@ class TroopManager:
                         self.logger.info(f"Gather operation {available_selection} API result: {api_result}")
                         # --- OPTIMIZATION ---
                         # Zero out the troops that were just sent
-                        for item_def in haul_dict:
-                            item, carry = item_def.split(":")
+                        for item in haul_list:
                             if item in self.troops:
                                 self.troops[item] = "0"
                         # --- END OPTIMIZATION ---

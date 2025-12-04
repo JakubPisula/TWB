@@ -1,5 +1,4 @@
 import unittest
-from unittest.mock import MagicMock
 from game.attack import AttackManager
 from game.troopmanager import TroopManager
 
@@ -91,6 +90,71 @@ class TestSmartFarming(unittest.TestCase):
         result = self.am.get_smart_troops(template)
 
         self.assertEqual(result.get("light"), 5)
+
+    def test_zero_capacity_template_returns_none(self):
+        """
+        FIX: Templates with only zero-capacity units (spy, ram, catapult, snob)
+        should return None so send_farm() performs the normal availability check.
+        This prevents sending attacks with unavailable troops.
+        """
+        # Template: 5 Spies (0 capacity each) = 0 total capacity
+        template = {"spy": 5}
+        self.tm.troops = {"spy": "10", "spear": "100"}
+
+        result = self.am.get_smart_troops(template)
+
+        # Should return None, NOT the template
+        self.assertIsNone(result)
+
+    def test_zero_capacity_rams_template_returns_none(self):
+        """
+        Templates with only rams should also return None.
+        """
+        template = {"ram": 10}
+        self.tm.troops = {"ram": "5", "light": "50"}
+
+        result = self.am.get_smart_troops(template)
+
+        self.assertIsNone(result)
+
+    def test_mixed_zero_and_carry_capacity(self):
+        """
+        Templates with mix of zero-capacity and carry-capacity units
+        should work normally (only the carry capacity counts).
+        """
+        # Template: 5 Spies (0) + 10 Light (800) = 800 capacity
+        # Have: 3 Spies, 5 Light
+        # Expected: use available spies + fill with light
+        template = {"spy": 5, "light": 10}
+        self.tm.troops = {"spy": "3", "light": "20", "spear": "100"}
+
+        result = self.am.get_smart_troops(template)
+
+        # Should have the 3 available spies and enough light to reach 800 capacity
+        self.assertEqual(result.get("spy"), 3)
+        self.assertEqual(result.get("light"), 10)  # 10 * 80 = 800
+
+    def test_no_troops_available_returns_none(self):
+        """
+        When no troops are available at all, should return None.
+        """
+        template = {"axe": 20}
+        self.tm.troops = {}
+
+        result = self.am.get_smart_troops(template)
+
+        self.assertIsNone(result)
+
+    def test_only_zero_capacity_troops_available(self):
+        """
+        When only zero-capacity troops are available, should return None.
+        """
+        template = {"axe": 20}  # Target: 200 capacity
+        self.tm.troops = {"spy": "100", "ram": "50"}
+
+        result = self.am.get_smart_troops(template)
+
+        self.assertIsNone(result)
 
 if __name__ == '__main__':
     unittest.main()

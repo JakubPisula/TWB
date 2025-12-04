@@ -113,28 +113,38 @@ class AttackManager:
 
     def get_smart_troops(self, template):
         """
-        Calculates the troop composition based on loot capacity
+        Calculates the troop composition based on loot capacity.
+
+        Smart farming replaces missing template troops with available units
+        to reach the desired loot capacity. Units are selected based on
+        priority (efficiency) order.
+
+        Returns:
+            dict: Optimized troop composition, or None if no suitable troops available
         """
         if not self.troopmanager or not hasattr(self.troopmanager, "carry_capacity"):
+            self.logger.debug("Smart farming disabled: troopmanager or carry_capacity not available")
             return None
 
         # Calculate target capacity from template
-        target_capacity = 0
-        for unit, count in template.items():
-            capacity = self.troopmanager.carry_capacity.get(unit, 0)
-            target_capacity += capacity * int(count)
+        target_capacity = sum(
+            self.troopmanager.carry_capacity.get(unit, 0) * int(count)
+            for unit, count in template.items()
+        )
 
+        # FIX: Zero-capacity templates (e.g., only spies/rams) should return None
+        # to trigger the normal availability check in send_farm()
         if target_capacity == 0:
-            return template
+            self.logger.debug("Smart farming skipped: template has zero carry capacity (spies/rams only)")
+            return None
 
-        available_troops = {}
-        for unit, count_str in self.troopmanager.troops.items():
-            available_troops[unit] = int(count_str)
+        # Use dictionary comprehension for cleaner code
+        available_troops = {unit: int(count_str) for unit, count_str in self.troopmanager.troops.items()}
 
         smart_troops = {}
         current_load = 0
 
-        # Phase 1: Use template units first
+        # Phase 1: Use template units first (prefer original template composition)
         for unit, count in template.items():
             count = int(count)
             if unit in available_troops and available_troops[unit] > 0:
@@ -144,7 +154,7 @@ class AttackManager:
                     current_load += take * self.troopmanager.carry_capacity.get(unit, 0)
                     available_troops[unit] -= take
 
-        # Phase 2: Fill gap
+        # Phase 2: Fill remaining capacity gap with priority units
         if current_load < target_capacity:
             remaining_load = target_capacity - current_load
             priority_list = self.smart_farming_priority or ["light", "marcher", "heavy", "spear", "axe", "sword", "archer"]
@@ -158,11 +168,10 @@ class AttackManager:
                     if capacity <= 0:
                         continue
 
-                    needed = int(remaining_load / capacity)
-                    if remaining_load % capacity != 0:
-                        needed += 1  # Round up
-
+                    # Optimized ceiling division: (a + b - 1) // b
+                    needed = (remaining_load + capacity - 1) // capacity
                     take = min(available_troops[unit], needed)
+
                     if take > 0:
                         smart_troops[unit] = smart_troops.get(unit, 0) + take
                         added_load = take * capacity
@@ -172,7 +181,14 @@ class AttackManager:
 
         # If we have no troops selected, return None (fail)
         if not smart_troops:
+            self.logger.debug("Smart farming failed: no suitable troops available")
             return None
+
+        # Log the smart farming result
+        self.logger.debug(
+            "Smart farming: target=%d, achieved=%d (%.1f%%), troops=%s",
+            target_capacity, current_load, (current_load / target_capacity * 100) if target_capacity else 0, smart_troops
+        )
 
         return smart_troops
 

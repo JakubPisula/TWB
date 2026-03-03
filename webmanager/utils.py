@@ -135,7 +135,7 @@ class BuildingTemplateManager:
 class MapBuilder:
 
     @staticmethod
-    def build(villages, current_village=None, size=None):
+    def build(villages, current_village=None, size=None, attacks=None):
         out_map = {}
         min_x = 999
         max_x = 0
@@ -162,6 +162,8 @@ class MapBuilder:
                 current_location = vdata['location']
                 extra_data['owner'] = vdata['owner']
                 extra_data['tribe'] = vdata['tribe']
+            if attacks and v in attacks:
+                vdata['recent_attack'] = attacks[v]
             grid_vils["%d:%d" % (x, y)] = vdata
 
         if current_location and size:

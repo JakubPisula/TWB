@@ -4,6 +4,7 @@ import sys
 sys.path.insert(0, "../")
 
 from flask import Flask, jsonify, send_from_directory, request, render_template
+from flask_cors import CORS
 
 try:
     from webmanager.helpfile import help_file, buildings
@@ -12,9 +13,17 @@ except ImportError:
     from helpfile import help_file, buildings
     from utils import DataReader, BotManager, MapBuilder, BuildingTemplateManager
 
+try:
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+    from core.database import DatabaseManager
+    _DB_OK = True
+except Exception:
+    _DB_OK = False
+
 bm = BotManager()
 
 app = Flask(__name__)
+CORS(app)
 app.config["DEBUG"] = True
 
 
@@ -151,6 +160,15 @@ def sync():
     sort_reports = {key: value for key, value in sorted(reports.items(), key=lambda item: int(item[0]))}
     n_items = {k: sort_reports[k] for k in list(sort_reports)[:100]}
 
+    report_counts = {}
+    for r_id, r_data in reports.items():
+        dest = r_data.get('dest')
+        if dest:
+            report_counts[dest] = report_counts.get(dest, 0) + 1
+
+    for v_id, v_data in villages.items():
+        v_data['report_count'] = report_counts.get(v_id, 0)
+
     out_struct = {
         "attacks": attacks,
         "villages": villages,
@@ -166,6 +184,179 @@ def sync():
 def get_vars():
     return jsonify(sync())
 
+
+@app.route('/api/village_attacks', methods=['GET'])
+def api_village_attacks():
+    """
+    Returns full attack history + production estimate for a given village.
+    Frontend map uses this for the detail panel.
+    """
+    vid = request.args.get('vid', None)
+    if not vid:
+        return jsonify({'error': 'vid required'}), 400
+    if not _DB_OK:
+        return jsonify({'error': 'database not available'}), 503
+
+    attacks  = DatabaseManager.get_attack_history(vid, limit=50)
+    village  = DatabaseManager.get_village(vid)
+    prod     = None
+    if village:
+        prod = {
+            'wood':  village.get('wood_prod', 0),
+            'stone': village.get('stone_prod', 0),
+            'iron':  village.get('iron_prod', 0),
+        }
+
+    # Collect all losses across these attacks
+    losses = []
+    for a in attacks:
+        for l in a.get('losses', []):
+            losses.append(l)
+
+    return jsonify({'attacks': attacks, 'production': prod, 'losses': losses})
+
+
+@app.route('/api/cookie_webhook', methods=['POST'])
+def cookie_webhook():
+    """
+    Webhook endpoint called by the browser extension.
+    Receives a JSON body: { "cookies": "sid=xxx; pl_auth=yyy; ...", "endpoint": "https://pl227.plemiona.pl/game.php" }
+    Updates the local session cache so the bot uses the fresh cookie without restart.
+    """
+    data = request.get_json(force=True, silent=True)
+    if not data or 'cookies' not in data:
+        return jsonify({'ok': False, 'error': 'missing cookies field'}), 400
+
+    raw_cookie  = data['cookies'].strip()
+    endpoint    = data.get('endpoint', '')
+
+    # Parse cookies string into dict for logging/fallback
+    cookies = {}
+    for part in raw_cookie.split(';'):
+        part = part.strip()
+        if '=' in part:
+            k, _, v = part.partition('=')
+            cookies[k.strip()] = v.strip()
+
+    session_path = os.path.join(os.path.dirname(__file__), '..', 'cache', 'session.json')
+    try:
+        if os.path.exists(session_path):
+            with open(session_path, 'r') as f:
+                session = json.load(f)
+        else:
+            session = {}
+
+        session['cookies'] = cookies
+        if endpoint:
+            session['endpoint'] = endpoint
+            
+        user_agent_str = data.get('userAgent', '')
+        if user_agent_str:
+            session['user_agent'] = user_agent_str
+
+        with open(session_path, 'w') as f:
+            json.dump(session, f, indent=2)
+
+        return jsonify({'ok': True, 'message': 'Session updated', 'cookies_count': len(cookies)})
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+@app.route('/api/plugin_report', methods=['POST'])
+def api_plugin_report():
+    """
+    Receives raw report HTML directly from the browser plugin.
+    Verifies if report exists, if not, parses it using ReportManager.
+    """
+    data = request.get_json(force=True, silent=True)
+    if not data or 'html' not in data or 'report_id' not in data:
+        return jsonify({'ok': False, 'message': 'Brak HTML lub ID raportu'}), 400
+        
+    report_id = str(data['report_id'])
+    html = data['html']
+    
+    import logging
+    log = logging.getLogger("PluginReport")
+    
+    from core.database import DatabaseManager
+    # Check if report already exists in DB
+    if hasattr(DatabaseManager, "get_report") and DatabaseManager.get_report(report_id):
+        log.info(f"Raport {report_id} otrzymał ping z wtyczki, ale już był w bazie.")
+        return jsonify({'ok': True, 'message': 'Raport już jest (Pominięto).'})
+        
+    try:
+        from game.reports import ReportManager
+        import re
+        rm = ReportManager(wrapper=None, village_id="0")
+        rm.logger = log
+        
+        get_type = re.search(r'class="report_(\w+)', html)
+        if not get_type:
+            log.warning(f"Nie udało się wczytać raportu {report_id}: zły / nie znana struktura html")
+            return jsonify({'ok': False, 'message': 'Nie znana struktura html'}), 400
+            
+        report_type = get_type.group(1)
+        if report_type == "ReportAttack":
+            # The attack_report function internally inserts to DB if successful
+            rm.attack_report(html, report_id)
+            log.info(f"Raport {report_id} został POMYŚLNIE zaczytany i zaktualizowany!")
+            return jsonify({'ok': True, 'message': 'Raport zaczytany (Atak).'})
+        else:
+            log.info(f"Odebrano z wtyczki strukturę raportu ignorowanego typu: {report_type}")
+            return jsonify({'ok': True, 'message': f'Zignorowano typ: {report_type}'})
+            
+    except Exception as e:
+        log.error(f"Nie udało się wczytać raportu {report_id} poprzez parsowanie struktury: złe komponenty? Błąd: {e}")
+        return jsonify({'ok': False, 'message': f'Błąd wczytywania: {str(e)}'}), 500
+
+@app.route('/api/force_reports', methods=['POST'])
+def api_force_reports():
+    """
+    Trigger reading backwards historical reports for statistics.
+    """
+    try:
+        import subprocess
+        script_path = os.path.join(os.path.dirname(__file__), '..', 'force_read_reports.py')
+        if not os.path.exists(script_path):
+            return jsonify({'ok': False, 'message': 'Skrypt force_read_reports.py nie istnieje.'}), 404
+            
+        subprocess.Popen([sys.executable, script_path], cwd=os.path.join(os.path.dirname(__file__), '..'))
+        return jsonify({'ok': True, 'message': 'Pobieranie historycznych raportów rozpoczęte w tle. Zobacz logi w konsoli.'})
+    except Exception as e:
+        return jsonify({'ok': False, 'message': str(e)}), 500
+
+
+@app.route('/api/logs', methods=['GET'])
+def get_logs():
+    """ Returns last 100 lines of the bot.log file """
+    log_path = os.path.join(os.path.dirname(__file__), '..', 'cache', 'bot.log')
+    if not os.path.exists(log_path):
+        return jsonify({'logs': 'Brak logów.'})
+    try:
+        with open(log_path, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+            return jsonify({'logs': ''.join(lines[-200:])})
+    except Exception as e:
+        return jsonify({'logs': f'Error reading log: {str(e)}'})
+
+@app.route('/api/logs/download', methods=['GET'])
+def download_logs():
+    """ Downloads the entire bot.log file """
+    cache_dir = os.path.join(os.path.dirname(__file__), '..', 'cache')
+    return send_from_directory(cache_dir, 'bot.log', as_attachment=True)
+
+@app.route('/api/logs/web', methods=['GET'])
+def get_web_logs():
+    """ Returns last 200 lines of the webmanager.log file """
+    log_path = os.path.join(os.path.dirname(__file__), '..', 'cache', 'webmanager.log')
+    if not os.path.exists(log_path):
+        return jsonify({'logs': 'Brak logów Web Panelu.'})
+    try:
+        with open(log_path, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+            return jsonify({'logs': ''.join(lines[-200:])})
+    except Exception as e:
+        return jsonify({'logs': f'Error reading log: {str(e)}'})
 
 @app.route('/bot/start')
 def start_bot():
@@ -196,8 +387,8 @@ def get_village_config():
 def get_map():
     sync_data = sync()
     center_id = request.args.get("center", None)
-    center = next(iter(sync_data['bot'])) if not center_id else center_id
-    map_data = json.dumps(MapBuilder.build(sync_data['villages'], current_village=center, size=15))
+    center = next(iter(sync_data.get('bot', [])), None) if not center_id else center_id
+    map_data = json.dumps(MapBuilder.build(sync_data['villages'], current_village=center, size=15, attacks=sync_data['attacks']))
     return render_template('map.html', data=sync_data, map=map_data)
 
 
@@ -249,7 +440,36 @@ def config_set():
     return jsonify(sync())
 
 
+@app.route('/api/clear_reports', methods=['POST'])
+def clear_reports_endpoint():
+    """
+    Clears all cached report JSON files and deletes related info.
+    Then kicks off historical report scan.
+    """
+    try:
+        cache_dir = os.path.join(os.path.dirname(__file__), '..', 'cache', 'reports')
+        if os.path.exists(cache_dir):
+            import glob
+            files = glob.glob(os.path.join(cache_dir, '*.json'))
+            for f in files:
+                try:
+                    os.remove(f)
+                except:
+                    pass
+        
+        # Trigger force_reports
+        import subprocess
+        script_path = os.path.join(os.path.dirname(__file__), '..', 'force_read_reports.py')
+        if os.path.exists(script_path):
+            subprocess.Popen([sys.executable, script_path], cwd=os.path.join(os.path.dirname(__file__), '..'))
+        return jsonify({"ok": True, "message": "Raporty wyczyszczone! Skan pobiera całą historię od nowa w tle."})
+    except Exception as e:
+        return jsonify({"ok": False, "message": str(e)}), 500
+
 if len(sys.argv) > 1:
-    app.run(host="localhost", port=sys.argv[1])
+    port = int(sys.argv[1])
 else:
-    app.run()
+    port = int(os.environ.get("FLASK_RUN_PORT", 5000))
+
+host = os.environ.get("FLASK_RUN_HOST", "0.0.0.0")
+app.run(host=host, port=port)

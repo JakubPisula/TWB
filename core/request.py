@@ -109,28 +109,154 @@ class WebWrapper:
             self.logger.warning("POST %s %s: %s", url, enc, str(e))
             return None
 
+    def set_cookies(self, cookies: dict):
+        """
+        Manually inject cookies into headers bypassing requests jar mutating pl_auth
+        """
+        cookie_str = "; ".join([f"{k}={v}" for k, v in cookies.items()])
+        for k, v in cookies.items():
+            if k == "Cookie":
+                cookie_str = v
+                break
+        self.headers['Cookie'] = cookie_str
+        self.web.cookies.clear()
+        
     def start(self, ):
         """
         Start the bot and verify whether the last session is still valid
         """
-        session_data = FileManager.load_json_file("cache/session.json")
+        try:
+            session_data = FileManager.load_json_file("cache/session.json")
+        except Exception:
+            session_data = None
+            
         if session_data:
-            self.web.cookies.update(session_data['cookies'])
+            import urllib.parse
+            # Set cookies explicitly decoding url encodings
+            if session_data.get('endpoint'):
+                ep = session_data['endpoint']
+                forbidden_servers = ["www", "plemiona", "tribalwars", "die-staemme"]
+                try:
+                    extracted_server = ep.split("//")[1].split(".")[0]
+                    if extracted_server not in forbidden_servers and len(extracted_server) > 0:
+                        self.endpoint = ep
+                        self.server = extracted_server
+                except Exception:
+                    pass
+            self.set_cookies(session_data['cookies'])
             get_test = self.get_url("game.php?screen=overview")
             if "game.php" in get_test.url:
                 return True
             self.logger.warning("Current session cache not valid")
+            import os
+            try:
+                os.remove("cache/session.json")
+            except Exception:
+                pass
 
         self.web.cookies.clear()
-        cinp = input("Enter browser cookie string> ")
+        print("Waiting for browser cookie... (Use the Chrome Extension to sync automatically or paste the string here and press Enter)")
+        
+        import sys
+        import select
+        import time
+        cinp = ""
+        while True:
+            # Sprawdź czy Web Panel uzupełnił już plik cache
+            try:
+                session_data = FileManager.load_json_file("cache/session.json")
+            except Exception:
+                session_data = None
+                
+            if session_data and "cookies" in session_data and session_data["cookies"]:
+                if session_data.get("endpoint"):
+                    ep = session_data["endpoint"]
+                    forbidden_servers = ["www", "plemiona", "tribalwars", "die-staemme"]
+                    try:
+                        extracted_server = ep.split("//")[1].split(".")[0]
+                        if extracted_server not in forbidden_servers and len(extracted_server) > 0:
+                            self.endpoint = ep
+                            self.server = extracted_server
+                    except Exception:
+                        pass
+                
+                # Update User Agent from Browser
+                if session_data.get("user_agent"):
+                    self.headers["user-agent"] = session_data["user_agent"]
+                    try:
+                        import json
+                        conf = FileManager.load_json_file("config.json")
+                        conf["bot"]["user_agent"] = session_data["user_agent"]
+                        FileManager.save_json_file(conf, "config.json")
+                    except Exception:
+                        pass
+                # Load cookies into request session carefully handling url decoding
+                import urllib.parse
+                # Set raw Cookie String header to avoid `requests` mutating pl_auth characters
+                cookie_str = "; ".join([f"{k}={v}" for k, v in session_data['cookies'].items()])
+                for k, v in session_data['cookies'].items():
+                    if k == "Cookie":
+                        cookie_str = v
+                        break
+                self.headers["Cookie"] = cookie_str
+                
+                get_test_url = urljoin(self.endpoint, "game.php?screen=overview")
+                try:
+                    import urllib.request
+                    class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+                        def http_error_302(self, req, fp, code, msg, headers):
+                            return fp
+                    opener = urllib.request.build_opener(NoRedirectHandler())
+                    urllib.request.install_opener(opener)
+                    
+                    req_test = urllib.request.Request(get_test_url)
+                    req_test.add_header('User-Agent', self.headers.get("user-agent", ""))
+                    req_test.add_header('Cookie', cookie_str)
+                    
+                    res_test = urllib.request.urlopen(req_test)
+                    
+                    if getattr(self, "logger", None):
+                        self.logger.info(f"Loaded {len(session_data['cookies'])} cookies from Web Panel!")
+                        self.logger.debug(f"URLLIB Request URL: {get_test_url}")
+                        self.logger.debug(f"URLLIB Header User-Agent: {self.headers.get('user-agent', '')}")
+                        self.logger.debug(f"URLLIB Header Cookie: {cookie_str}")
+                    
+                    if res_test.getcode() == 200:
+                        self.logger.info("Found synced cookies from Web Panel! Login successful.")
+                        # Load cookies into request session correctly. 
+                        # Crucial fix: Do not set them via s.cookies.update() because requests library changes auth hashes.
+                        # Setting self.headers["Cookie"] above is enough. We MUST clear requests cookies.
+                        self.web.cookies.clear()
+                        return True
+                    else:
+                        self.logger.warning(f"Cookies from Web Panel are invalid. Server returned redirect or error (code: {res_test.getcode()})")
+                        self.logger.warning(f"Sent cookies were: {session_data['cookies'].keys()}")
+                        try:
+                            os.remove("cache/session.json")
+                        except Exception:
+                            pass
+                except Exception as e:
+                    self.logger.warning(f"Error during verify: {e}")
+                    try:
+                        os.remove("cache/session.json")
+                    except Exception:
+                        pass
+                
+            # Sprawdź bez blokowania wstrzymania dla wejścia z klawiatury (max 1 sekunda na cykl)
+            if sys.stdin in select.select([sys.stdin], [], [], 1.0)[0]:
+                cinp = sys.stdin.readline().strip()
+                if cinp:
+                    # Ktoś wpisał własne ręczne ciastko
+                    break
+
         cookies = {}
-        cinp = cinp.strip()
         for itt in cinp.split(';'):
             itt = itt.strip()
             kvs = itt.split("=")
-            k = kvs[0]
-            v = '='.join(kvs[1:])
-            cookies[k] = v
+            if len(kvs) > 1:
+                k = kvs[0]
+                v = '='.join(kvs[1:])
+                cookies[k] = v
         self.web.cookies.update(cookies)
         self.logger.info("Game Endpoint: %s", self.endpoint)
 
@@ -142,6 +268,7 @@ class WebWrapper:
             'server': self.server,
             'cookies': cookies
         }, "cache/session.json")
+        return True
 
     def get_action(self, village_id, action):
         """

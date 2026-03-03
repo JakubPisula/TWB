@@ -4,4 +4,5 @@ psutil
 flask
 pyquery
 beautifulsoup4
-python-telegram-bot
+python-telegram-botsqlalchemy
+flask-cors

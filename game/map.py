@@ -29,18 +29,43 @@ class Map:
         self.wrapper = wrapper
         self.village_id = village_id
 
-    def get_map(self):
+    def get_map(self, radius=0, fetch_delay=8):
         """
         Fetch the map every 24ish hours and update the cache entries
         """
-        if self.last_fetch + (self.fetch_delay * 3600) > time.time():
+        if self.last_fetch + (fetch_delay * 3600) > time.time():
             return
         self.last_fetch = time.time()
         res = self.wrapper.get_action(village_id=self.village_id, action="map")
         game_state = Extractor.game_state(res)
         self.map_data = Extractor.map_data(res)
-        if self.map_data:
-            for tile in self.map_data:
+        self.parse_map_tiles(self.map_data, game_state)
+
+        # Active Map Scanning logic
+        if radius > 0 and self.my_location:
+            # We want to scan `radius` number of 20x20 sectors in each direction
+            # For each expanded block, we make an ajax request
+            for dx in range(-radius, radius + 1):
+                for dy in range(-radius, radius + 1):
+                    if dx == 0 and dy == 0:
+                        continue # Already loaded from initial map page
+                    
+                    req_x = int(self.my_location[0]) + dx * 20
+                    req_y = int(self.my_location[1]) + dy * 20
+                    # Load exact coordinate map API
+                    action_url = f"map&x={req_x}&y={req_y}"
+                    res_scan = self.wrapper.get_action(village_id=self.village_id, action=action_url)
+                    scan_data = Extractor.map_data(res_scan)
+                    if scan_data:
+                        self.parse_map_tiles(scan_data, game_state)
+
+        if not self.map_data or not self.villages:
+            return self.get_map_old(game_state=game_state)
+        return True
+
+    def parse_map_tiles(self, map_data, game_state):
+        if map_data:
+            for tile in map_data:
                 data = tile["data"]
                 x = int(data["x"])
                 y = int(data["y"])
@@ -73,9 +98,6 @@ class Map:
                         game_state["village"]["x"],
                         game_state["village"]["y"],
                     ]
-        if not self.map_data or not self.villages:
-            return self.get_map_old(game_state=game_state)
-        return True
 
     def get_map_old(self, game_state):
         """

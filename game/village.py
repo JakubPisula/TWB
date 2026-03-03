@@ -514,7 +514,9 @@ class Village:
         if not self.forced_peace and self.units.can_attack:
             if not self.area:
                 self.area = Map(wrapper=self.wrapper, village_id=self.village_id)
-            self.area.get_map()
+            rad = self.get_config(section="farms", parameter="map_scan_radius", default=0)
+            delay = self.get_config(section="farms", parameter="map_scan_delay", default=8)
+            self.area.get_map(radius=rad, fetch_delay=delay)
             if self.area.villages:
                 self.units.can_scout = self.get_config(
                     section="farms", parameter="force_scout_if_available", default=True

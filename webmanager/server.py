@@ -23,8 +23,20 @@ except Exception:
 bm = BotManager()
 
 app = Flask(__name__)
-CORS(app)
+CORS(app, resources={r"/*": {"origins": "*"}})
 app.config["DEBUG"] = True
+
+@app.after_request
+def add_pna_headers(response):
+    """ Allow Chrome Private Network Access (PNA) preflights and CORS """
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS, PUT, DELETE"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Requested-With"
+    response.headers["Access-Control-Allow-Private-Network"] = "true"
+    # Ensure preflight (OPTIONS) returns 200 for PNA
+    if request.method == 'OPTIONS':
+        response.status_code = 200
+    return response
 
 
 def pre_process_bool(key, value, village_id=None):
@@ -157,7 +169,14 @@ def sync():
     managed = DataReader.cache_grab("managed")
     bot_status = bm.is_running()
 
-    sort_reports = {key: value for key, value in sorted(reports.items(), key=lambda item: int(item[0]))}
+    def parse_report_id(r_id):
+        try:
+            return int(r_id)
+        except ValueError:
+            nums = ''.join(filter(str.isdigit, str(r_id)))
+            return int(nums) if nums else 0
+
+    sort_reports = {key: value for key, value in sorted(reports.items(), key=lambda item: parse_report_id(item[0]))}
     n_items = {k: sort_reports[k] for k in list(sort_reports)[:100]}
 
     report_counts = {}
@@ -238,26 +257,26 @@ def cookie_webhook():
             k, _, v = part.partition('=')
             cookies[k.strip()] = v.strip()
 
-    session_path = os.path.join(os.path.dirname(__file__), '..', 'cache', 'session.json')
     try:
-        if os.path.exists(session_path):
-            with open(session_path, 'r') as f:
-                session = json.load(f)
-        else:
-            session = {}
-
-        session['cookies'] = cookies
-        if endpoint:
-            session['endpoint'] = endpoint
+        from core.database import DatabaseManager, DBSession
+        db_s = DatabaseManager._session()
+        if db_s:
+            # Clear old and write new
+            db_s.query(DBSession).delete()
             
-        user_agent_str = data.get('userAgent', '')
-        if user_agent_str:
-            session['user_agent'] = user_agent_str
-
-        with open(session_path, 'w') as f:
-            json.dump(session, f, indent=2)
-
-        return jsonify({'ok': True, 'message': 'Session updated', 'cookies_count': len(cookies)})
+            user_agent_str = data.get('userAgent', '')
+            
+            new_sess = DBSession(
+                endpoint=endpoint,
+                server=endpoint.split("//")[1].split(".")[0] if "//" in endpoint else "",
+                cookies=cookies,
+                user_agent=user_agent_str
+            )
+            db_s.add(new_sess)
+            db_s.commit()
+            db_s.close()
+        
+        return jsonify({'ok': True, 'message': 'Session updated in DB', 'cookies_count': len(cookies)})
     except Exception as e:
         return jsonify({'ok': False, 'error': str(e)}), 500
 
@@ -309,19 +328,77 @@ def api_plugin_report():
         log.error(f"Nie udało się wczytać raportu {report_id} poprzez parsowanie struktury: złe komponenty? Błąd: {e}")
         return jsonify({'ok': False, 'message': f'Błąd wczytywania: {str(e)}'}), 500
 
+@app.route('/api/plugin/map', methods=['POST'])
+def api_plugin_map():
+    """
+    Receives raw map data chunks directly from the browser plugin.
+    Mass UPSERTS villages into PostgreSQL to keep the bot's map cache live without extra traffic.
+    """
+    data = request.get_json(force=True, silent=True)
+    if not data or 'villages' not in data:
+        return jsonify({'ok': False, 'message': 'Brak danych mapy'}), 400
+        
+    try:
+        from core.database import DatabaseManager, DBVillage
+        from sqlalchemy.dialects.postgresql import insert
+        from datetime import datetime
+        
+        db_s = DatabaseManager._session()
+        if not db_s:
+            return jsonify({'ok': False, 'message': 'DB Error'}), 500
+            
+        updated = 0
+        for v in data['villages']:
+            # Upsert logic
+            stmt = insert(DBVillage).values(
+                id=str(v.get('id')),
+                name=v.get('name', ''),
+                x=int(v.get('x', 0)),
+                y=int(v.get('y', 0)),
+                points=int(v.get('points', 0)),
+                owner_id=str(v.get('owner', '0')),
+                last_seen=datetime.utcnow()
+            )
+            stmt = stmt.on_conflict_do_update(
+                index_elements=['id'],
+                set_={
+                    'name': stmt.excluded.name,
+                    'points': stmt.excluded.points,
+                    'owner_id': stmt.excluded.owner_id,
+                    'last_seen': stmt.excluded.last_seen
+                }
+            )
+            db_s.execute(stmt)
+            updated += 1
+            
+        db_s.commit()
+        db_s.close()
+        
+        import logging
+        log = logging.getLogger("PluginMap")
+        log.info(f"Odebrano z wtyczki i zaktualizowano {updated} wiosek na naszej lokalnej mapie!")
+        
+        return jsonify({'ok': True, 'message': f'Zaktualizowano {updated} wiosek z mapy'})
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
 @app.route('/api/force_reports', methods=['POST'])
 def api_force_reports():
     """
     Trigger reading backwards historical reports for statistics.
     """
     try:
+        data = request.get_json(silent=True) or {}
+        pages = str(data.get('pages', 5))
         import subprocess
         script_path = os.path.join(os.path.dirname(__file__), '..', 'force_read_reports.py')
         if not os.path.exists(script_path):
             return jsonify({'ok': False, 'message': 'Skrypt force_read_reports.py nie istnieje.'}), 404
             
-        subprocess.Popen([sys.executable, script_path], cwd=os.path.join(os.path.dirname(__file__), '..'))
-        return jsonify({'ok': True, 'message': 'Pobieranie historycznych raportów rozpoczęte w tle. Zobacz logi w konsoli.'})
+        subprocess.Popen([sys.executable, script_path, pages], cwd=os.path.join(os.path.dirname(__file__), '..'))
+        return jsonify({'ok': True, 'message': f'Pobieranie {pages} stron historycznych raportów rozpoczęte w tle. Zobacz logi w konsoli.'})
     except Exception as e:
         return jsonify({'ok': False, 'message': str(e)}), 500
 
@@ -458,11 +535,13 @@ def clear_reports_endpoint():
                     pass
         
         # Trigger force_reports
+        data = request.get_json(silent=True) or {}
+        pages = str(data.get('pages', 5))
         import subprocess
         script_path = os.path.join(os.path.dirname(__file__), '..', 'force_read_reports.py')
         if os.path.exists(script_path):
-            subprocess.Popen([sys.executable, script_path], cwd=os.path.join(os.path.dirname(__file__), '..'))
-        return jsonify({"ok": True, "message": "Raporty wyczyszczone! Skan pobiera całą historię od nowa w tle."})
+            subprocess.Popen([sys.executable, script_path, pages], cwd=os.path.join(os.path.dirname(__file__), '..'))
+        return jsonify({"ok": True, "message": f"Raporty wyczyszczone! Skan ({pages} stron) pobiera historię od nowa w tle."})
     except Exception as e:
         return jsonify({"ok": False, "message": str(e)}), 500
 

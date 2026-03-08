@@ -84,21 +84,8 @@ class ReportManager:
                     return 1
 
                 if entry["losses"] != {}:
-                    # Acceptable losses for attacks
-                    print(f'Units sent: {entry["extra"]["units_sent"]}')
-                    print(f'Units lost: {entry["losses"]}')
-
-                for sent_type in entry["extra"]["units_sent"]:
-                    amount = entry["extra"]["units_sent"][sent_type]
-                    if sent_type in entry["losses"]:
-                        if amount == entry["losses"][sent_type]:
-                            return 0  # Lost all units!
-                        elif entry["losses"][sent_type] <= 1:
-                            # Allow to lose 1 unit (luck depended)
-                            return 1  # Lost 'just' one unit
-
-                if entry["losses"] != {}:
-                    return 0  # Disengage if anything was lost!
+                    # Disengage if anything was lost!
+                    return 0
         return -1
 
     # --- PERFORMANCE (POINT 2) ---
@@ -263,7 +250,7 @@ class ReportManager:
                         extra["defence_losses"] = self.re_unit(
                             Extractor.units_in_total(def_units[2])
                         )
-                        if str(to_player) == str(self.game_state["player"]["id"]):
+                        if self.game_state and "player" in self.game_state and str(to_player) == str(self.game_state["player"]["id"]):
                             losses = extra["defence_losses"]
         results = re.search(r'(?s)(<table id="attack_results".+?</table>)', report)
         report = report.replace('<span class="grey">.</span>', "")
@@ -307,7 +294,8 @@ class ReportManager:
 
         # --- PERFORMANCE (POINT 3) ---
         # Update farm statistics immediately when processing the report
-        if attack_type == "attack" and to_village and str(from_player) == str(self.game_state["player"]["id"]):
+        player_id = self.game_state.get("player", {}).get("id") if self.game_state else None
+        if attack_type == "attack" and to_village and (not player_id or str(from_player) == str(player_id)):
             try:
                 self.update_farm_cache_stats(to_village, extra, losses)
             except Exception as e:

@@ -5,22 +5,25 @@ Tables: Villages, Attacks, Reports, Units_Lost, Resources_Snapshot
 """
 import logging
 import os
+import json
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 
 try:
     from sqlalchemy import (
         create_engine, Column, Integer, String, Float, Boolean,
-        DateTime, ForeignKey, Text, JSON, Index
+        DateTime, ForeignKey, Text, Index
     )
+    from sqlalchemy.dialects.postgresql import JSONB
     from sqlalchemy.orm import DeclarativeBase, relationship, Session, sessionmaker
     HAS_SQLALCHEMY = True
 except ImportError:
     HAS_SQLALCHEMY = False
 
+from core.filemanager import FileManager
+
 logger = logging.getLogger("Database")
 
-DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "cache", "twb.db")
 _engine = None
 _SessionLocal = None
 
@@ -52,10 +55,27 @@ if HAS_SQLALCHEMY:
                                  cascade="all, delete-orphan")
         reports   = relationship("DBReport", back_populates="village",
                                  cascade="all, delete-orphan")
+        settings  = relationship("DBVillageSettings", back_populates="village", uselist=False, cascade="all, delete-orphan")
 
         __table_args__ = (
             Index("ix_village_xy", "x", "y"),
         )
+
+    class DBSession(Base):
+        __tablename__ = "sessions"
+        id          = Column(Integer, primary_key=True, autoincrement=True)
+        endpoint    = Column(String, nullable=False)
+        server      = Column(String, nullable=False)
+        cookies     = Column(JSONB, default=dict)
+        user_agent  = Column(String, nullable=True)
+        updated_at  = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    class DBVillageSettings(Base):
+        __tablename__ = "village_settings"
+        village_id  = Column(String, ForeignKey("villages.id"), primary_key=True)
+        settings    = Column(JSONB, default=dict)
+        
+        village     = relationship("DBVillage", back_populates="settings")
 
     class DBAttack(Base):
         __tablename__ = "attacks"
@@ -67,7 +87,7 @@ if HAS_SQLALCHEMY:
         loot_wood       = Column(Integer, default=0)
         loot_stone      = Column(Integer, default=0)
         loot_iron       = Column(Integer, default=0)
-        troops_sent     = Column(JSON, default=dict)   # {"axe": 100, ...}
+        troops_sent     = Column(JSONB, default=dict)   # {"axe": 100, ...}
         won             = Column(Boolean, nullable=True)  # None = unknown
         scout_only      = Column(Boolean, default=False)
 
@@ -98,16 +118,16 @@ if HAS_SQLALCHEMY:
         report_type = Column(String, default="")  # "attack", "scout", etc.
         origin_id   = Column(String, nullable=True)
         dest_id     = Column(String, nullable=True)
-        raw_extra   = Column(JSON, default=dict)   # full extra dict from parser
+        raw_extra   = Column(JSONB, default=dict)   # full extra dict from parser
         loot_wood   = Column(Integer, default=0)
         loot_stone  = Column(Integer, default=0)
         loot_iron   = Column(Integer, default=0)
         scout_wood      = Column(Integer, nullable=True)  # resources seen by scouts
         scout_stone     = Column(Integer, nullable=True)
         scout_iron      = Column(Integer, nullable=True)
-        scout_buildings = Column(JSON, nullable=True)
+        scout_buildings = Column(JSONB, nullable=True)
         created_at  = Column(DateTime, default=datetime.utcnow)
-        losses_json = Column(JSON, default=dict)
+        losses_json = Column(JSONB, default=dict)
 
         village     = relationship("DBVillage", back_populates="reports",
                                    foreign_keys=[village_id])
@@ -143,16 +163,23 @@ if HAS_SQLALCHEMY:
 def get_engine():
     global _engine
     if _engine is None:
-        db_dir = os.path.dirname(DB_PATH)
-        if db_dir:
-            os.makedirs(db_dir, exist_ok=True)
+        try:
+            config = FileManager.load_json_file("config.json")
+            db_config = config.get("database", {})
+            db_url = db_config.get("url", "postgresql://postgres:postgres@localhost:5432/twb")
+            pool_size = db_config.get("pool_size", 10)
+        except Exception:
+            db_url = "postgresql://postgres:postgres@localhost:5432/twb"
+            pool_size = 10
+
         _engine = create_engine(
-            f"sqlite:///{DB_PATH}",
-            connect_args={"check_same_thread": False},
+            db_url,
+            pool_size=pool_size,
+            max_overflow=20
         )
         if HAS_SQLALCHEMY:
             Base.metadata.create_all(_engine)
-            logger.info("SQLite database ready at %s", DB_PATH)
+            logger.info("PostgreSQL database ready at %s", db_url)
         else:
             logger.warning("SQLAlchemy not installed – DB layer disabled")
     return _engine

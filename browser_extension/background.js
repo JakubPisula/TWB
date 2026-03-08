@@ -12,7 +12,7 @@
 // -----------------------------------------------------------------------
 // Configuration – user can override via popup
 // -----------------------------------------------------------------------
-const DEFAULT_BOT_URL = "http://127.0.0.1:5000";
+const DEFAULT_BOT_URL = "http://localhost:5000"; // Fallback ONLY
 const COOKIE_DOMAINS = [
     ".plemiona.pl",
     ".tribalwars.net",
@@ -193,6 +193,30 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (msg.action === "set_bot_url") {
         chrome.storage.local.set({ botUrl: msg.url }, () => {
             sendResponse({ ok: true });
+        });
+        return true;
+    }
+    if (msg.action === "fetch_bot") {
+        const { url, method, body } = msg.payload;
+        console.log(`[TWB-Background] Fetching: ${url} (${method})`);
+        
+        fetch(url, {
+            method: method || "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+            mode: 'cors'
+        })
+        .then(r => {
+            if (!r.ok) throw new Error(`HTTP Error: ${r.status}`);
+            return r.json();
+        })
+        .then(d => {
+            console.log(`[TWB-Background] Success response from ${url}`);
+            sendResponse({ ok: true, data: d });
+        })
+        .catch(e => {
+            console.error(`[TWB-Background] Fetch error for ${url}:`, e.message);
+            sendResponse({ ok: false, error: e.message });
         });
         return true;
     }

@@ -528,10 +528,8 @@ class TWB:
         directories = [
             "cache/attacks",
             "cache/reports",
-            "cache/villages",
             "cache/world",
             "cache/logs",
-            "cache/managed",
             "cache/hunter"
         ]
         FileManager.create_directories(directories)

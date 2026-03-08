@@ -16,8 +16,12 @@
     "https://*.tribalwars.net/*",
     "https://*.die-staemme.de/*",
     "https://*.tribalwars.nl/*",
+    "http://192.168.*.*/*",
+    "http://10.*.*.*/*",
+    "http://172.*.*.*/*",
     "http://localhost/*",
-    "http://127.0.0.1/*"
+    "http://127.0.0.1/*",
+    "<all_urls>"
   ],
   "background": {
     "service_worker": "background.js",
@@ -29,11 +33,24 @@
   "content_scripts": [
     {
       "matches": [
-        "*://*.plemiona.pl/game.php*screen=report*",
-        "*://*.tribalwars.net/game.php*screen=report*"
+        "*://*.plemiona.pl/game.php*",
+        "*://*.tribalwars.net/game.php*",
+        "*://*.die-staemme.de/game.php*",
+        "*://*.tribalwars.nl/game.php*"
       ],
       "js": ["content.js"],
       "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "*://*.plemiona.pl/game.php*",
+        "*://*.tribalwars.net/game.php*",
+        "*://*.die-staemme.de/game.php*",
+        "*://*.tribalwars.nl/game.php*"
+      ],
+      "js": ["map_scraper.js"],
+      "run_at": "document_idle",
+      "world": "MAIN"
     }
   ]
 }

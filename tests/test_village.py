@@ -1,3 +1,7 @@
+"""
+Tests for test_village.
+Migrated from root directory during AI-Update cleanup.
+"""
 import unittest
 from unittest.mock import patch, MagicMock
 from datetime import datetime

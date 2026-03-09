@@ -5,25 +5,23 @@ Tables: Villages, Attacks, Reports, Units_Lost, Resources_Snapshot
 """
 import logging
 import os
-import json
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 
 try:
     from sqlalchemy import (
         create_engine, Column, Integer, String, Float, Boolean,
-        DateTime, ForeignKey, Text, Index
+        DateTime, ForeignKey, Text, JSON, Index, desc
     )
-    from sqlalchemy.dialects.postgresql import JSONB
-    from sqlalchemy.orm import DeclarativeBase, relationship, Session, sessionmaker
+    from sqlalchemy.orm import DeclarativeBase, relationship, Session, sessionmaker, joinedload
+    from contextlib import contextmanager
     HAS_SQLALCHEMY = True
 except ImportError:
     HAS_SQLALCHEMY = False
 
-from core.filemanager import FileManager
-
 logger = logging.getLogger("Database")
 
+DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "cache", "twb.db")
 _engine = None
 _SessionLocal = None
 
@@ -55,27 +53,10 @@ if HAS_SQLALCHEMY:
                                  cascade="all, delete-orphan")
         reports   = relationship("DBReport", back_populates="village",
                                  cascade="all, delete-orphan")
-        settings  = relationship("DBVillageSettings", back_populates="village", uselist=False, cascade="all, delete-orphan")
 
         __table_args__ = (
             Index("ix_village_xy", "x", "y"),
         )
-
-    class DBSession(Base):
-        __tablename__ = "sessions"
-        id          = Column(Integer, primary_key=True, autoincrement=True)
-        endpoint    = Column(String, nullable=False)
-        server      = Column(String, nullable=False)
-        cookies     = Column(JSONB, default=dict)
-        user_agent  = Column(String, nullable=True)
-        updated_at  = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
-    class DBVillageSettings(Base):
-        __tablename__ = "village_settings"
-        village_id  = Column(String, ForeignKey("villages.id"), primary_key=True)
-        settings    = Column(JSONB, default=dict)
-        
-        village     = relationship("DBVillage", back_populates="settings")
 
     class DBAttack(Base):
         __tablename__ = "attacks"
@@ -87,7 +68,7 @@ if HAS_SQLALCHEMY:
         loot_wood       = Column(Integer, default=0)
         loot_stone      = Column(Integer, default=0)
         loot_iron       = Column(Integer, default=0)
-        troops_sent     = Column(JSONB, default=dict)   # {"axe": 100, ...}
+        troops_sent     = Column(JSON, default=dict)   # {"axe": 100, ...}
         won             = Column(Boolean, nullable=True)  # None = unknown
         scout_only      = Column(Boolean, default=False)
 
@@ -118,16 +99,16 @@ if HAS_SQLALCHEMY:
         report_type = Column(String, default="")  # "attack", "scout", etc.
         origin_id   = Column(String, nullable=True)
         dest_id     = Column(String, nullable=True)
-        raw_extra   = Column(JSONB, default=dict)   # full extra dict from parser
+        raw_extra   = Column(JSON, default=dict)   # full extra dict from parser
         loot_wood   = Column(Integer, default=0)
         loot_stone  = Column(Integer, default=0)
         loot_iron   = Column(Integer, default=0)
         scout_wood      = Column(Integer, nullable=True)  # resources seen by scouts
         scout_stone     = Column(Integer, nullable=True)
         scout_iron      = Column(Integer, nullable=True)
-        scout_buildings = Column(JSONB, nullable=True)
+        scout_buildings = Column(JSON, nullable=True)
         created_at  = Column(DateTime, default=datetime.utcnow)
-        losses_json = Column(JSONB, default=dict)
+        losses_json = Column(JSON, default=dict)
 
         village     = relationship("DBVillage", back_populates="reports",
                                    foreign_keys=[village_id])
@@ -135,6 +116,7 @@ if HAS_SQLALCHEMY:
         __table_args__ = (
             Index("ix_report_dest",  "dest_id"),
             Index("ix_report_type",  "report_type"),
+            Index("ix_report_created", "created_at"),
         )
 
     class DBResourceSnapshot(Base):
@@ -155,34 +137,89 @@ if HAS_SQLALCHEMY:
             Index("ix_snapshot_village", "village_id"),
         )
 
+    class DBSession(Base):
+        """
+        Stores tribal wars session data (cookies, etc.)
+        """
+        __tablename__ = "sessions"
+        id          = Column(Integer, primary_key=True, autoincrement=True)
+        endpoint    = Column(String, nullable=False)
+        server      = Column(String, nullable=False)
+        cookies     = Column(JSON, default=dict)
+        user_agent  = Column(String, default="")
+        updated_at  = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    class DBVillageSettings(Base):
+        """
+        Stores village-specific bot settings
+        """
+        __tablename__ = "village_settings"
+        village_id  = Column(String, primary_key=True)
+        settings    = Column(JSON, default=dict)
+        updated_at  = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
 
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
-def get_engine():
+def get_engine(db_url: str = None):
     global _engine
     if _engine is None:
-        try:
-            config = FileManager.load_json_file("config.json")
-            db_config = config.get("database", {})
-            db_url = db_config.get("url", "postgresql://postgres:postgres@localhost:5432/twb")
-            pool_size = db_config.get("pool_size", 10)
-        except Exception:
-            db_url = "postgresql://postgres:postgres@localhost:5432/twb"
-            pool_size = 10
+        if not db_url:
+            # Fallback to local config check or default SQLite
+            try:
+                import json
+                with open("config.json", "r") as f:
+                    config = json.load(f)
+                db_url = config.get("database", {}).get("url")
+            except Exception:
+                db_url = f"sqlite:///{DB_PATH}"
 
-        _engine = create_engine(
-            db_url,
-            pool_size=pool_size,
-            max_overflow=20
-        )
-        if HAS_SQLALCHEMY:
-            Base.metadata.create_all(_engine)
-            logger.info("PostgreSQL database ready at %s", db_url)
+        if db_url.startswith("sqlite"):
+            db_dir = os.path.dirname(DB_PATH)
+            if db_dir:
+                os.makedirs(db_dir, exist_ok=True)
+            _engine = create_engine(
+                db_url,
+                connect_args={"check_same_thread": False},
+            )
         else:
-            logger.warning("SQLAlchemy not installed – DB layer disabled")
+            # PostgreSQL or other remote DB
+            _engine = create_engine(
+                db_url,
+                pool_size=10,
+                max_overflow=20,
+                pool_pre_ping=True
+            )
+
+        try:
+            if HAS_SQLALCHEMY:
+                Base.metadata.create_all(_engine)
+                logger.info("Database engine ready: %s", db_url.split("@")[-1] if "@" in db_url else db_url)
+            else:
+                logger.warning("SQLAlchemy not installed – DB layer disabled")
+        except Exception:
+            _engine = None
+            raise
     return _engine
+
+
+@contextmanager
+def session_scope():
+    """Provide a transactional scope around a series of operations."""
+    session = get_session()
+    if session is None:
+        yield None
+        return
+    try:
+        yield session
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
 
 
 def get_session() -> Optional[Session]:
@@ -217,8 +254,8 @@ class DatabaseManager:
                        wood_prod: float = 0, stone_prod: float = 0, iron_prod: float = 0):
         if not HAS_SQLALCHEMY:
             return
-        s = DatabaseManager._session()
-        try:
+        with session_scope() as s:
+            if s is None: return
             row = s.get(DBVillage, vid)
             if not row:
                 row = DBVillage(id=vid)
@@ -236,19 +273,13 @@ class DatabaseManager:
                 row.stone_prod = stone_prod
             if iron_prod:
                 row.iron_prod  = iron_prod
-            s.commit()
-        except Exception as e:
-            logger.error("upsert_village error: %s", e)
-            s.rollback()
-        finally:
-            s.close()
 
     @staticmethod
     def get_village(vid: str) -> Optional[Dict]:
         if not HAS_SQLALCHEMY:
             return None
-        s = DatabaseManager._session()
-        try:
+        with session_scope() as s:
+            if s is None: return None
             row = s.get(DBVillage, vid)
             if not row:
                 return None
@@ -258,8 +289,6 @@ class DatabaseManager:
                 "wood_prod": row.wood_prod, "stone_prod": row.stone_prod, "iron_prod": row.iron_prod,
                 "last_seen": row.last_seen.isoformat() if row.last_seen else None,
             }
-        finally:
-            s.close()
 
     # ----- Attacks -----
 
@@ -270,8 +299,8 @@ class DatabaseManager:
                     sent_at: datetime = None, arrived_at: datetime = None) -> Optional[int]:
         if not HAS_SQLALCHEMY:
             return None
-        s = DatabaseManager._session()
-        try:
+        with session_scope() as s:
+            if s is None: return None
             # Ensure village row exists
             for vid in [origin_id, target_id]:
                 if vid and not s.get(DBVillage, vid):
@@ -291,21 +320,15 @@ class DatabaseManager:
                 scout_only  = scout_only,
             )
             s.add(a)
-            s.commit()
+            s.flush() # Get the ID before commit
             return a.id
-        except Exception as e:
-            logger.error("save_attack error: %s", e)
-            s.rollback()
-            return None
-        finally:
-            s.close()
 
     @staticmethod
     def save_units_lost(attack_id: int, losses: dict, side: str = "attacker"):
         if not HAS_SQLALCHEMY or not attack_id:
             return
-        s = DatabaseManager._session()
-        try:
+        with session_scope() as s:
+            if s is None: return
             for unit_type, amount in losses.items():
                 if int(amount) > 0:
                     s.add(DBUnitsLost(
@@ -314,20 +337,13 @@ class DatabaseManager:
                         amount=int(amount),
                         side=side,
                     ))
-            s.commit()
-        except Exception as e:
-            logger.error("save_units_lost error: %s", e)
-            s.rollback()
-        finally:
-            s.close()
 
     @staticmethod
     def get_attack_history(target_id: str, limit: int = 50) -> List[Dict]:
-        if not HAS_SQLALCHEMY:
-            return []
-        s = DatabaseManager._session()
-        try:
+        with session_scope() as s:
+            if s is None: return []
             rows = (s.query(DBAttack)
+                    .options(joinedload(DBAttack.losses))
                     .filter(DBAttack.target_id == target_id)
                     .order_by(DBAttack.sent_at.desc())
                     .limit(limit)
@@ -350,8 +366,6 @@ class DatabaseManager:
                     "losses":      losses,
                 })
             return out
-        finally:
-            s.close()
 
     # ----- Reports -----
 
@@ -360,11 +374,9 @@ class DatabaseManager:
         """Check if a report exists in the database"""
         if not HAS_SQLALCHEMY:
             return None
-        s = cls._session()
-        try:
+        with session_scope() as s:
+            if s is None: return None
             return s.get(DBReport, str(report_id))
-        finally:
-            s.close()
 
     @classmethod
     def save_report(cls, report_id: str, report_type: str,
@@ -374,8 +386,8 @@ class DatabaseManager:
                     scout_buildings: dict = None):
         if not HAS_SQLALCHEMY:
             return
-        s = cls._session()
-        try:
+        with session_scope() as s:
+            if s is None: return
             # Ensure village rows exist
             for vid in [origin_id, dest_id]:
                 if vid and not s.get(DBVillage, vid):
@@ -405,12 +417,6 @@ class DatabaseManager:
                 scout_buildings = scout_buildings,
             )
             s.add(r)
-            s.commit()
-        except Exception as e:
-            logger.error("save_report error: %s", e)
-            s.rollback()
-        finally:
-            s.close()
 
     # ----- Resource snapshots -----
 
@@ -418,17 +424,70 @@ class DatabaseManager:
     def save_resource_snapshot(village_id: str, wood: int, stone: int, iron: int, storage: int):
         if not HAS_SQLALCHEMY:
             return
-        s = DatabaseManager._session()
-        try:
+        with session_scope() as s:
+            if s is None: return
             s.add(DBResourceSnapshot(
                 village_id=village_id, wood=wood, stone=stone, iron=iron, storage=storage
             ))
-            s.commit()
-        except Exception as e:
-            logger.error("save_resource_snapshot error: %s", e)
-            s.rollback()
-        finally:
-            s.close()
+
+    # ----- Bulk Operations -----
+
+    @staticmethod
+    def save_reports_bulk(reports_data: List[Dict]):
+        if not HAS_SQLALCHEMY or not reports_data:
+            return
+        
+        with session_scope() as s:
+            if s is None: return
+            
+            # Extract IDs to check for existence in one go
+            report_ids = [str(r["report_id"]) for r in reports_data]
+            existing_ids = {row[0] for row in s.query(DBReport.report_id).filter(DBReport.report_id.in_(report_ids)).all()}
+            
+            for data in reports_data:
+                rid = str(data["report_id"])
+                if rid in existing_ids:
+                    continue
+                
+                # Ensure villages exist (cached per session)
+                v_ids = [vid for vid in [data.get("origin_id"), data.get("dest_id")] if vid]
+                for vid in v_ids:
+                    if not s.get(DBVillage, vid):
+                        s.add(DBVillage(id=vid))
+                
+                loot = data.get("loot") or {}
+                scout_res = data.get("scout_resources") or {}
+                
+                r = DBReport(
+                    report_id   = rid,
+                    village_id  = data.get("dest_id"),
+                    report_type = data.get("report_type", ""),
+                    origin_id   = data.get("origin_id"),
+                    dest_id     = data.get("dest_id"),
+                    raw_extra   = data.get("extra") or {},
+                    loot_wood   = int(loot.get("wood", 0)),
+                    loot_stone  = int(loot.get("stone", 0)),
+                    loot_iron   = int(loot.get("iron", 0)),
+                    losses_json = data.get("losses") or {},
+                    scout_wood  = int(scout_res.get("wood", 0)) if scout_res else None,
+                    scout_stone = int(scout_res.get("stone", 0)) if scout_res else None,
+                    scout_iron  = int(scout_res.get("iron", 0)) if scout_res else None,
+                    scout_buildings = data.get("scout_buildings"),
+                )
+                s.add(r)
+
+    @staticmethod
+    def prune_old_data(days: int = 30):
+        """Delete reports and snapshots older than X days."""
+        if not HAS_SQLALCHEMY:
+            return
+        from datetime import timedelta
+        cutoff = datetime.utcnow() - timedelta(days=days)
+        with session_scope() as s:
+            if s is None: return
+            s.query(DBReport).filter(DBReport.created_at < cutoff).delete()
+            s.query(DBResourceSnapshot).filter(DBResourceSnapshot.recorded_at < cutoff).delete()
+            logger.info("Pruned data older than %d days", days)
 
     # ----- Production estimation -----
 

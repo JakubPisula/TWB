@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "twb"
+version = "2.2.0"
+description = "Tribal Wars Bot - Antygravity fork"
+requires-python = ">=3.8"
+license = {text = "GPL-3.0"}
+readme = "README.md"
+authors = [{name = "Antygravity Team"}]
+dependencies = [
+    # Dependencies should be synced from requirements.txt if needed
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
+
+[tool.black]
+line-length = 100
+target-version = ["py38", "py39", "py310", "py311"]
+
+[tool.isort]
+profile = "black"
+line_length = 100
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true

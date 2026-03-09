@@ -1,3 +1,7 @@
+"""
+Tests for test_reports.
+Migrated from root directory during AI-Update cleanup.
+"""
 import re
 from core.extractors import Extractor
 
@@ -26,4 +30,3 @@ rows = re.findall(r'(?s)<tr[^>]*>(.+?)</tr>', report)
 print(len(rows))
 for i, u in enumerate(rows):
     print(f"Row {i}:", Extractor.units_in_total(u))
-

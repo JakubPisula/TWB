@@ -12,7 +12,7 @@
 // -----------------------------------------------------------------------
 // Configuration – user can override via popup
 // -----------------------------------------------------------------------
-const DEFAULT_BOT_URL = "http://localhost:5000"; // Fallback ONLY
+const DEFAULT_BOT_URL = "http://127.0.0.1:5000";
 const COOKIE_DOMAINS = [
     ".plemiona.pl",
     ".tribalwars.net",
@@ -64,6 +64,7 @@ async function collectCookiesFromActiveTabs() {
 /** POST cookie data to the local bot server. */
 async function sendToBot(cookieStr, endpoint, botUrl, retry = true) {
     try {
+        console.log(`[TWB] Attempting sync to: ${botUrl}/api/cookie_webhook`);
         const resp = await fetch(`${botUrl}/api/cookie_webhook`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -196,27 +197,27 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         });
         return true;
     }
-    if (msg.action === "fetch_bot") {
-        const { url, method, body } = msg.payload;
-        console.log(`[TWB-Background] Fetching: ${url} (${method})`);
-        
-        fetch(url, {
-            method: method || "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(body),
-            mode: 'cors'
-        })
-        .then(r => {
-            if (!r.ok) throw new Error(`HTTP Error: ${r.status}`);
-            return r.json();
-        })
-        .then(d => {
-            console.log(`[TWB-Background] Success response from ${url}`);
-            sendResponse({ ok: true, data: d });
-        })
-        .catch(e => {
-            console.error(`[TWB-Background] Fetch error for ${url}:`, e.message);
-            sendResponse({ ok: false, error: e.message });
+    if (msg.action === "send_report") {
+        getBotUrl().then(botUrl => {
+            const targetUrl = `${botUrl}/api/plugin_report`;
+            console.log(`[TWB] Background: Attempting report sync to: ${targetUrl}`);
+            fetch(targetUrl, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(msg.data),
+            })
+                .then(r => {
+                    console.log(`[TWB] Background: Response status: ${r.status}`);
+                    return r.json();
+                })
+                .then(res => {
+                    console.log(`[TWB] Background: Sync result:`, res);
+                    sendResponse(res);
+                })
+                .catch(err => {
+                    console.error(`[TWB] Background: Sync FAILED:`, err);
+                    sendResponse({ ok: false, message: `Fetch Error: ${err.message}` });
+                });
         });
         return true;
     }

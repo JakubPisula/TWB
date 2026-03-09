@@ -161,29 +161,19 @@ class Map:
             "resources": {},
         }
         self.map_pos[vid] = location
-        try:
-            from core.database import DatabaseManager
-            DatabaseManager.upsert_village(
-                vid=vid,
-                name=name,
-                x=location[0],
-                y=location[1],
-                points=points,
-                owner_id=player
-            )
-        except Exception as e:
-            logging.error(f"Failed to upsert village {vid} to DB: {e}")
+        cached = self.in_cache(vid)
+        if not cached:
+            MapCache.set_cache(village_id=vid, entry=structure)
+        if cached and cached != structure:
+            MapCache.set_cache(village_id=vid, entry=structure)
         self.villages[vid] = structure
 
     def in_cache(self, vid):
         """
-        Checks if a village is already in the database
+        Checks if a village is already in the village cache
         """
-        try:
-            from core.database import DatabaseManager
-            return DatabaseManager.get_village(vid)
-        except Exception:
-            return None
+        entry = MapCache.get_cache(village_id=vid)
+        return entry
 
     def get_dist(self, ext_loc):
         """
@@ -203,38 +193,13 @@ class MapCache:
     @staticmethod
     def get_cache(village_id):
         """
-        Get data from the database
+        Get data from the cache
         """
-        try:
-            from core.database import DatabaseManager
-            res = DatabaseManager.get_village(village_id)
-            if res:
-                # Convert DB format back to map structure format if needed
-                return {
-                    "id": res["id"],
-                    "name": res["name"],
-                    "location": [res["x"], res["y"]],
-                    "points": res["points"],
-                    "owner": res["owner_id"]
-                }
-            return None
-        except Exception:
-            return None
+        return FileManager.load_json_file(f"cache/villages/{village_id}.json")
 
     @staticmethod
     def set_cache(village_id, entry):
         """
-        Creates or updates a database entry
+        Creates or updates a cache entry
         """
-        try:
-            from core.database import DatabaseManager
-            DatabaseManager.upsert_village(
-                vid=village_id,
-                name=entry["name"],
-                x=entry["location"][0],
-                y=entry["location"][1],
-                points=entry["points"],
-                owner_id=entry["owner"]
-            )
-        except Exception as e:
-            logging.error(f"Failed to set map cache for {village_id}: {e}")
+        FileManager.save_json_file(entry, f"cache/villages/{village_id}.json")

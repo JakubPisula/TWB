@@ -5,8 +5,10 @@
 - `core/` hosts shared services for HTTP, caching, I/O, and notifications.
 - `game/` implements farming, defence, recruitment, and simulation logic.
 - `webmanager/` contains the Flask dashboard plus its `static/` and `templates/`.
-- `templates/` holds build/troop presets; keep custom presets beside their variants.
-- `tests/` stores `unittest` suites; `cache/` is runtime-only and should remain ignored.
+- `templates/` holds build/troop presets.
+- `tests/` stores `pytest` suites; `cache/` is runtime-only and should remain ignored.
+- `tools/` contains developer helper scripts and utilities.
+- `scripts/` holds system scripts like backend restart or activation.
 
 ## Build, Test, and Development Commands
 - `python -m venv env` with the platform-appropriate activate script creates an isolated environment.

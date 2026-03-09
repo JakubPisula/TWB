@@ -1,3 +1,7 @@
+"""
+Tests for test_regex_parsing.
+Migrated from root directory during AI-Update cleanup.
+"""
 import re
 
 html1 = '<span class="icon header wood" title="Drewno"></span>1 000'

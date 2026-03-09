@@ -33,12 +33,6 @@ my_village = villages[0]
 rep_man = ReportManager(wrapper=wrapper, village_id=my_village)
 
 PAGES_TO_READ = 5
-if len(sys.argv) > 1:
-    try:
-        PAGES_TO_READ = int(sys.argv[1])
-    except ValueError:
-        pass
-
 logger.info(f"Rozpoczynam zczytywanie historycznych raportów (strony: {PAGES_TO_READ}) dla wioski {my_village}...")
 
 for page in range(PAGES_TO_READ):

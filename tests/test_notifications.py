@@ -1,3 +1,7 @@
+"""
+Tests for test_notifications.
+Migrated from root directory during AI-Update cleanup.
+"""
 import logging
 import json
 import re

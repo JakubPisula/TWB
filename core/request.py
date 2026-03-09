@@ -11,11 +11,9 @@ import logging
 import re
 import time
 import random
-import os
 from urllib.parse import urljoin, urlencode
 
 from core.reporter import ReporterObject
-from core.database import DatabaseManager, DBSession
 
 
 class WebWrapper:
@@ -74,7 +72,7 @@ class WebWrapper:
         if not headers:
             headers = self.headers
         try:
-            res = self.web.get(url=url, headers=headers, timeout=30)
+            res = self.web.get(url=url, headers=headers)
             self.logger.debug("GET %s [%d]", url, res.status_code)
             self.post_process(res)
             if 'data-bot-protect="forced"' in res.text:
@@ -103,7 +101,7 @@ class WebWrapper:
         if not headers:
             headers = self.headers
         try:
-            res = self.web.post(url=url, data=data, headers=headers, timeout=30)
+            res = self.web.post(url=url, data=data, headers=headers)
             self.logger.debug("POST %s %s [%d]", url, enc, res.status_code)
             self.post_process(res)
             return res
@@ -127,22 +125,10 @@ class WebWrapper:
         """
         Start the bot and verify whether the last session is still valid
         """
-        session_data = None
-        db_s = DatabaseManager._session()
-        if db_s:
-            try:
-                row = db_s.query(DBSession).order_by(DBSession.updated_at.desc()).first()
-                if row and row.cookies:
-                    session_data = {
-                        "endpoint": row.endpoint,
-                        "server": row.server,
-                        "cookies": row.cookies,
-                        "user_agent": row.user_agent
-                    }
-            except Exception as e:
-                self.logger.error(f"Error reading session from DB: {e}")
-            finally:
-                db_s.close()
+        try:
+            session_data = FileManager.load_json_file("cache/session.json")
+        except Exception:
+            session_data = None
             
         if session_data:
             import urllib.parse
@@ -161,17 +147,12 @@ class WebWrapper:
             get_test = self.get_url("game.php?screen=overview")
             if "game.php" in get_test.url:
                 return True
-            self.logger.warning("Current database session not valid")
-            # Clear invalid session in DB
-            db_s = DatabaseManager._session()
-            if db_s:
-                try:
-                    db_s.query(DBSession).delete()
-                    db_s.commit()
-                except Exception:
-                    db_s.rollback()
-                finally:
-                    db_s.close()
+            self.logger.warning("Current session cache not valid")
+            import os
+            try:
+                os.remove("cache/session.json")
+            except Exception:
+                pass
 
         self.web.cookies.clear()
         print("Waiting for browser cookie... (Use the Chrome Extension to sync automatically or paste the string here and press Enter)")
@@ -181,25 +162,10 @@ class WebWrapper:
         import time
         cinp = ""
         while True:
-            # Check if Web Panel filled the DB session in the background
-            db_s = DatabaseManager._session()
-            if db_s:
-                try:
-                    row = db_s.query(DBSession).order_by(DBSession.updated_at.desc()).first()
-                    if row and row.cookies:
-                        session_data = {
-                            "endpoint": row.endpoint,
-                            "server": row.server,
-                            "cookies": row.cookies,
-                            "user_agent": row.user_agent
-                        }
-                    else:
-                        session_data = None
-                except Exception:
-                    session_data = None
-                finally:
-                    db_s.close()
-            else:
+            # Sprawdź czy Web Panel uzupełnił już plik cache
+            try:
+                session_data = FileManager.load_json_file("cache/session.json")
+            except Exception:
                 session_data = None
                 
             if session_data and "cookies" in session_data and session_data["cookies"]:
@@ -256,32 +222,25 @@ class WebWrapper:
                         self.logger.debug(f"URLLIB Header Cookie: {cookie_str}")
                     
                     if res_test.getcode() == 200:
-                        self.logger.info("Found synced cookies from DB! Login successful.")
+                        self.logger.info("Found synced cookies from Web Panel! Login successful.")
+                        # Load cookies into request session correctly. 
+                        # Crucial fix: Do not set them via s.cookies.update() because requests library changes auth hashes.
+                        # Setting self.headers["Cookie"] above is enough. We MUST clear requests cookies.
                         self.web.cookies.clear()
                         return True
                     else:
-                        self.logger.warning(f"Cookies from DB are invalid. Server returned redirect or error (code: {res_test.getcode()})")
+                        self.logger.warning(f"Cookies from Web Panel are invalid. Server returned redirect or error (code: {res_test.getcode()})")
                         self.logger.warning(f"Sent cookies were: {session_data['cookies'].keys()}")
-                        db_s = DatabaseManager._session()
-                        if db_s:
-                            try:
-                                db_s.query(DBSession).delete()
-                                db_s.commit()
-                            except Exception:
-                                db_s.rollback()
-                            finally:
-                                db_s.close()
-                except Exception as e:
-                    self.logger.warning(f"Error during verify DB credentials: {e}")
-                    db_s = DatabaseManager._session()
-                    if db_s:
                         try:
-                            db_s.query(DBSession).delete()
-                            db_s.commit()
+                            os.remove("cache/session.json")
                         except Exception:
-                            db_s.rollback()
-                        finally:
-                            db_s.close()
+                            pass
+                except Exception as e:
+                    self.logger.warning(f"Error during verify: {e}")
+                    try:
+                        os.remove("cache/session.json")
+                    except Exception:
+                        pass
                 
             # Sprawdź bez blokowania wstrzymania dla wejścia z klawiatury (max 1 sekunda na cykl)
             if sys.stdin in select.select([sys.stdin], [], [], 1.0)[0]:
@@ -304,26 +263,11 @@ class WebWrapper:
         for c in self.web.cookies:
             cookies[c.name] = c.value
 
-        db_s = DatabaseManager._session()
-        if db_s:
-            try:
-                # Remove old sessions
-                db_s.query(DBSession).delete()
-                # Insert new session
-                new_sess = DBSession(
-                    endpoint=self.endpoint,
-                    server=self.server,
-                    cookies=cookies,
-                    user_agent=self.headers.get('user-agent')
-                )
-                db_s.add(new_sess)
-                db_s.commit()
-            except Exception as e:
-                self.logger.error(f"Failed to manually save keyboard session to DB: {e}")
-                db_s.rollback()
-            finally:
-                db_s.close()
-
+        FileManager.save_json_file({
+            'endpoint': self.endpoint,
+            'server': self.server,
+            'cookies': cookies
+        }, "cache/session.json")
         return True
 
     def get_action(self, village_id, action):

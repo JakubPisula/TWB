@@ -5,6 +5,7 @@ import logging
 import math
 import random
 import time
+from datetime import datetime
 
 from core.extractors import Extractor
 from game.resources import ResourceManager
@@ -169,6 +170,7 @@ class TroopManager:
         """
         if disabled_units is None:
             disabled_units = []
+
         if self.wait_for[self.village_id][building] > time.time():
             human_ts = self.readable_ts(self.wait_for[self.village_id][building])
             self.logger.info(
@@ -177,54 +179,50 @@ class TroopManager:
             )
             return False
 
-        run_selection = list(self.wanted[building].keys())
-        if self.randomize_unit_queue:
-            random.shuffle(run_selection)
-
-        # Track if we've already failed due to insufficient resources
-        resource_check_failed = False
-
-        for wanted in run_selection:
-            # Ignore disabled units
+        # Track if we have any pending recruitment
+        buildings_to_check = []
+        
+        # Determine if we even need to check this building
+        for wanted, count in self.wanted[building].items():
             if wanted in disabled_units:
                 continue
+            
+            current_total = self.total_troops.get(wanted, 0)
+            if count > current_total:
+                buildings_to_check.append((wanted, count - current_total))
 
-            # Skip if we already know resources are insufficient
-            if resource_check_failed:
-                self.logger.debug(
-                    "Skipping %s recruitment attempt - insufficient resources detected earlier",
-                    wanted
-                )
-                continue
+        if not buildings_to_check:
+            self.logger.info("Recruitment:%s up-to-date", building)
+            return False
 
-            if wanted not in self.total_troops:
-                result = self.recruit(
-                    wanted, self.wanted[building][wanted], building=building
-                )
-                if result:
-                    return True
-                # Check if failure was due to resources by looking at recruit_data
-                if self.recruit_data and wanted in self.recruit_data:
-                    get_min = self.get_min_possible(self.recruit_data[wanted])
-                    if get_min == 0:
-                        resource_check_failed = True
-                continue
+        # If we have cached recruit data, check if we can afford at least 1 unit before going to the building
+        can_afford_any = False
+        for wanted, gap in buildings_to_check:
+            if wanted in self.recruit_data:
+                res_req = self.recruit_data[wanted]
+                if self.get_min_possible(res_req) > 0:
+                    can_afford_any = True
+                    break
+            else:
+                # No data yet, must visit building to find out costs
+                can_afford_any = True
+                break
+        
+        if not can_afford_any:
+            self.logger.info("Recruitment:%s skipped (insufficient resources for all units)", building)
+            # We don't block here anymore, just skip this run
+            return False
 
-            if self.wanted[building][wanted] > self.total_troops[wanted]:
-                result = self.recruit(
-                    wanted,
-                    self.wanted[building][wanted] - self.total_troops[wanted],
-                    building=building,
-                    )
-                if result:
-                    return True
-                # Check if failure was due to resources by looking at recruit_data
-                if self.recruit_data and wanted in self.recruit_data:
-                    get_min = self.get_min_possible(self.recruit_data[wanted])
-                    if get_min == 0:
-                        resource_check_failed = True
+        if self.randomize_unit_queue:
+            random.shuffle(buildings_to_check)
 
-        self.logger.info("Recruitment:%s up-to-date", building)
+        for wanted, gap in buildings_to_check:
+            # We already checked can_afford_any, but now we attempt actual recruitment
+            result = self.recruit(wanted, gap, building=building)
+            if result:
+                return True
+
+        self.logger.debug("Recruitment:%s no units could be recruited at this time", building)
         return False
 
     def get_min_possible(self, entry):
@@ -730,11 +728,10 @@ class TroopManager:
 
         self.recruit_data = Extractor.recruit_data(data)
         self.game_data = Extractor.game_state(data)
+        self.logger.info("Attempting recruitment of %d %s" % (amount, unit_type))
 
         if amount > self.max_batch_size:
             amount = self.max_batch_size
-
-        self.logger.info("Attempting recruitment of %d %s" % (amount, unit_type))
 
         if unit_type not in self.recruit_data:
             self.logger.warning(
@@ -807,28 +804,38 @@ class TroopManager:
             return False
         if isinstance(result, dict) and "game_data" in result:
             self.resman.update(result["game_data"])
-            self.wait_for[self.village_id][building] = int(time.time()) + (
-                    amount * int(resources["build_time"])
-            )
-            # self.troops[unit_type] = str((int(self.troops[unit_type]) if unit_type in self.troops else 0) + amount)
+            # Safely parse build_time (game sometimes returns strings or large values)
+            try:
+                bt_val = int(resources.get("build_time", 0))
+                # If build_time is > 100k, it's likely a bug or a timestamp, cap it to something sane
+                if bt_val > 86400:
+                    self.logger.debug(f"Caping suspicious build_time: {bt_val}")
+                    bt_val = 600 # Fallback to 10 min
+                
+                self.wait_for[self.village_id][building] = int(time.time()) + (amount * bt_val)
+            except Exception:
+                 self.wait_for[self.village_id][building] = int(time.time()) + 60
+
+            idle_until_str = datetime.fromtimestamp(self.wait_for[self.village_id][building]).strftime('%H:%M:%S')
+
             self.logger.info(
-                "Recruitment of %d %s started (%s idle till %d)",
+                "Recruitment of %d %s started (%s idle until %s)",
                 amount,
                 unit_type,
                 building,
-                self.wait_for[self.village_id][building],
+                idle_until_str,
             )
             self.wrapper.reporter.report(
                 self.village_id,
                 "TWB_RECRUIT",
-                "Recruitment of %d %s started (%s idle till %d)"
+                "Recruitment of %d %s started (%s idle until %s)"
                 % (
                     amount,
                     unit_type,
                     building,
-                    self.wait_for[self.village_id][building],
+                    idle_until_str,
                 ),
-                )
+            )
             return True
         return False
 
@@ -847,11 +854,16 @@ class TroopManager:
         """
         Human readable timestamp
         """
-        seconds -= time.time()
-        seconds = seconds % (24 * 3600)
-        hour = seconds // 3600
-        seconds %= 3600
-        minutes = seconds // 60
-        seconds %= 60
+        diff = seconds - time.time()
+        if diff <= 0:
+            return "0:00:00"
+        
+        days = int(diff // 86400)
+        remainder = int(diff % 86400)
+        hours = remainder // 3600
+        minutes = (remainder % 3600) // 60
+        secs = remainder % 60
 
-        return "%d:%02d:%02d" % (hour, minutes, seconds)
+        if days > 0:
+            return "%dd %d:%02d:%02d" % (days, hours, minutes, secs)
+        return "%d:%02d:%02d" % (hours, minutes, secs)

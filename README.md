@@ -472,6 +472,37 @@ Dieses Projekt hat eine solide Basis, aber es gibt immer Raum für Weiterentwick
 
 ---
 
+## 🛠️ Dla Deweloperów (Antygravity Fork)
+
+### Uruchamianie testów
+
+```bash
+# Zainstaluj zależności deweloperskie
+pip install pytest black mypy
+
+# Uruchom wszystkie testy
+pytest tests/
+
+# Uruchom konkretny moduł
+pytest tests/test_farm_manager.py -v
+```
+
+### Praca z AI (Claude Code)
+
+Ten fork zawiera pliki instrukcji dla asystentów AI:
+
+- **`AGENTS.md`** — główne instrukcje dla agentów AI pracujących nad projektem
+- **`.ai_docs/`** — dokumentacja architektury generowana i używana przez AI
+- **`.claude/`** — konfiguracja Claude Code
+
+Przed rozpoczęciem pracy z Claude Code przeczytaj `AGENTS.md`.
+
+### Narzędzia pomocnicze
+
+Dodatkowe skrypty deweloperskie znajdziesz w `tools/`.
+
+---
+
 ## 📄 Lizenz
 
 Dieses Projekt steht unter der **GNU General Public License v3.0**. Details findest du in der [LICENSE.md](LICENSE.md) Datei.

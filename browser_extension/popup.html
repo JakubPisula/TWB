@@ -115,31 +115,6 @@
         .btn-outline:hover {
             background: rgba(21, 101, 192, 0.2);
         }
-
-        .toggle-container {
-            margin-top: 10px;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            font-size: 12px;
-            color: #eee;
-        }
-
-        .twb-notification {
-            position: fixed;
-            top: 20px;
-            right: 20px;
-            background: #16213e;
-            color: #fff;
-            padding: 12px 20px;
-            border-left: 4px solid #1565c0;
-            border-radius: 4px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.5);
-            z-index: 10000;
-            font-family: sans-serif;
-            transition: opacity 0.3s, transform 0.3s;
-            pointer-events: none;
-        }
     </style>
 </head>
 
@@ -150,19 +125,7 @@
     <input type="text" id="bot-url" placeholder="http://127.0.0.1:5000" />
 
     <button class="btn" id="save-btn">💾 Save URL</button>
-    <button class="btn-outline" id="test-btn" style="border-color:#4caf50;color:#4caf50;">🔍 Test Connection</button>
     <button class="btn green" id="sync-btn">🔄 Sync now</button>
-    
-    <div class="toggle-container" style="margin-top: 10px; border-top: 1px solid #30475e; padding-top: 10px;">
-        <label>Map Radius (fields):</label>
-        <input type="number" id="map-radius" value="20" min="5" max="100" style="width: 60px; margin-left: 10px; background: #1a1a2e; border: 1px solid #30475e; color: #fff; border-radius: 4px; padding: 3px;">
-    </div>
-    
-    <div class="toggle-container">
-        <input type="checkbox" id="debug-toggle">
-        <label for="debug-toggle" style="margin:0">Enable Debug Console</label>
-    </div>
-
     <button class="btn-outline" id="open-panel-btn">🌍 Open Web Panel</button>
 
     <div class="status" id="status">Loading status…</div>

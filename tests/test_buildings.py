@@ -1,3 +1,7 @@
+"""
+Tests for test_buildings.
+Migrated from root directory during AI-Update cleanup.
+"""
 from core.extractors import Extractor
 import re
 with open("report.html") as f:
@@ -8,9 +12,9 @@ units = re.search(r'(?s)<table id="attack_info_att_units"(.+?)</table>', attacke
 sent_units = re.findall(r"(?s)<tr[^>]*>(.+?)</tr>", units.group(1))
 
 print("TR 2:", repr(sent_units[2]))
-print(Extractor.units_in_total(sent_units[2]))
 
 def new_units_in_total(res):
+    # This matches generic data-unit-count="..." but also backwards compatibility?
     d = re.findall(r'class=[\'"]?[^\'"]*?\bunit-item unit-item-([a-z]+)\b[^\'"]*?[\'"].*?>\s*(\d+)\s*</td>', res)
     return d
 

@@ -1,3 +1,7 @@
+"""
+Tests for test_smart_farming.
+Migrated from root directory during AI-Update cleanup.
+"""
 import unittest
 from game.attack import AttackManager
 from game.troopmanager import TroopManager

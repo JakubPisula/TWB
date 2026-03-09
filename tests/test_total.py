@@ -1,3 +1,7 @@
+"""
+Tests for test_total.
+Migrated from root directory during AI-Update cleanup.
+"""
 import sys, json
 from core.request import WebWrapper
 from core.extractors import Extractor

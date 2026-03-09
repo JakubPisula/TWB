@@ -1,3 +1,7 @@
+"""
+Tests for test_scavenger.
+Migrated from root directory during AI-Update cleanup.
+"""
 import re
 from core.extractors import Extractor
 from game.reports import ReportManager

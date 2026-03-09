@@ -23,19 +23,27 @@ except Exception:
 bm = BotManager()
 
 app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": "*"}})
+# CORS and PNA are handled manually below
 app.config["DEBUG"] = True
+
+@app.route('/<path:path>', methods=['OPTIONS'])
+@app.route('/', methods=['OPTIONS'])
+def handle_options(path=None):
+    app.logger.error(f"DEBUG: Preflight for {path} from {request.remote_addr}. Headers: {dict(request.headers)}")
+    resp = app.make_default_options_response()
+    resp.headers["Access-Control-Allow-Origin"] = "*"
+    resp.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS, PUT, DELETE"
+    resp.headers["Access-Control-Allow-Headers"] = "*"
+    resp.headers["Access-Control-Allow-Private-Network"] = "true"
+    resp.headers["Access-Control-Max-Age"] = "86400"  # 24 hours
+    return resp
 
 @app.after_request
 def add_pna_headers(response):
     """ Allow Chrome Private Network Access (PNA) preflights and CORS """
     response.headers["Access-Control-Allow-Origin"] = "*"
-    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS, PUT, DELETE"
-    response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Requested-With"
     response.headers["Access-Control-Allow-Private-Network"] = "true"
-    # Ensure preflight (OPTIONS) returns 200 for PNA
-    if request.method == 'OPTIONS':
-        response.status_code = 200
+    response.headers["Vary"] = "Origin"
     return response
 
 
@@ -204,6 +212,10 @@ def get_vars():
     return jsonify(sync())
 
 
+@app.route('/api/health', methods=['GET'])
+def health_check():
+    return jsonify({'status': 'ok', 'message': 'TWB Bot Server is running'})
+
 @app.route('/api/village_attacks', methods=['GET'])
 def api_village_attacks():
     """
@@ -235,15 +247,26 @@ def api_village_attacks():
     return jsonify({'attacks': attacks, 'production': prod, 'losses': losses})
 
 
-@app.route('/api/cookie_webhook', methods=['POST'])
+@app.route('/api/cookie_webhook', methods=['POST', 'OPTIONS'])
 def cookie_webhook():
     """
     Webhook endpoint called by the browser extension.
     Receives a JSON body: { "cookies": "sid=xxx; pl_auth=yyy; ...", "endpoint": "https://pl227.plemiona.pl/game.php" }
     Updates the local session cache so the bot uses the fresh cookie without restart.
     """
+    if request.method == 'OPTIONS':
+        app.logger.error(f"DEBUG: Preflight cookie_webhook from {request.remote_addr}")
+        resp = app.make_default_options_response()
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+        resp.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS, GET"
+        resp.headers["Access-Control-Allow-Headers"] = "*"
+        resp.headers["Access-Control-Allow-Private-Network"] = "true"
+        return resp
+
+    app.logger.error(f"DEBUG: POST cookie_webhook from {request.remote_addr}")
     data = request.get_json(force=True, silent=True)
     if not data or 'cookies' not in data:
+        app.logger.warning(f"Invalid cookie_webhook POST: body={request.data}")
         return jsonify({'ok': False, 'error': 'missing cookies field'}), 400
 
     raw_cookie  = data['cookies'].strip()
@@ -275,18 +298,38 @@ def cookie_webhook():
             db_s.add(new_sess)
             db_s.commit()
             db_s.close()
+            
+            # For backward compatibility with bot core:
+            from core.filemanager import FileManager
+            FileManager.save_json_file({
+                'endpoint': endpoint,
+                'server': endpoint.split("//")[1].split(".")[0] if "//" in endpoint else "",
+                'cookies': cookies,
+                'user_agent': user_agent_str
+            }, "cache/session.json")
         
         return jsonify({'ok': True, 'message': 'Session updated in DB', 'cookies_count': len(cookies)})
     except Exception as e:
+        app.logger.error(f"Error updating session in DB: {e}")
         return jsonify({'ok': False, 'error': str(e)}), 500
 
 
-@app.route('/api/plugin_report', methods=['POST'])
+@app.route('/api/plugin_report', methods=['POST', 'OPTIONS'])
 def api_plugin_report():
     """
     Receives raw report HTML directly from the browser plugin.
     Verifies if report exists, if not, parses it using ReportManager.
     """
+    if request.method == 'OPTIONS':
+        app.logger.error(f"DEBUG: Preflight plugin_report from {request.remote_addr}")
+        resp = app.make_default_options_response()
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+        resp.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS, GET"
+        resp.headers["Access-Control-Allow-Headers"] = "*"
+        resp.headers["Access-Control-Allow-Private-Network"] = "true"
+        return resp
+
+    app.logger.error(f"DEBUG: POST plugin_report from {request.remote_addr}")
     data = request.get_json(force=True, silent=True)
     if not data or 'html' not in data or 'report_id' not in data:
         return jsonify({'ok': False, 'message': 'Brak HTML lub ID raportu'}), 400

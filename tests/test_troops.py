@@ -1,3 +1,7 @@
+"""
+Tests for test_troops.
+Migrated from root directory during AI-Update cleanup.
+"""
 import sys
 import json
 from core.request import WebWrapper
@@ -19,4 +23,3 @@ r_data = Extractor.recruit_data(res.text)
 if r_data:
     for k in list(r_data.keys())[:3]:
         print(f"Key {k}: {r_data[k]}")
-

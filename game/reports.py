@@ -84,8 +84,21 @@ class ReportManager:
                     return 1
 
                 if entry["losses"] != {}:
-                    # Disengage if anything was lost!
-                    return 0
+                    # Acceptable losses for attacks
+                    print(f'Units sent: {entry["extra"]["units_sent"]}')
+                    print(f'Units lost: {entry["losses"]}')
+
+                for sent_type in entry["extra"]["units_sent"]:
+                    amount = entry["extra"]["units_sent"][sent_type]
+                    if sent_type in entry["losses"]:
+                        if amount == entry["losses"][sent_type]:
+                            return 0  # Lost all units!
+                        elif entry["losses"][sent_type] <= 1:
+                            # Allow to lose 1 unit (luck depended)
+                            return 1  # Lost 'just' one unit
+
+                if entry["losses"] != {}:
+                    return 0  # Disengage if anything was lost!
         return -1
 
     # --- PERFORMANCE (POINT 2) ---
@@ -123,6 +136,7 @@ class ReportManager:
         new = 0
         from core.database import DatabaseManager
 
+        reports_to_bulk_save = []
         for report_id in ids:
             if report_id in self.last_reports:
                 continue
@@ -144,12 +158,19 @@ class ReportManager:
             if get_type:
                 report_type = get_type.group(1)
                 if report_type == "ReportAttack":
-                    self.attack_report(data.text, report_id)
+                    save_data = self.attack_report(data.text, report_id)
+                    if save_data:
+                        reports_to_bulk_save.append(save_data)
                     continue
 
                 else:
-                    res = self.put(report_id, report_type=report_type)
+                    res, save_data = self.put(report_id, report_type=report_type)
                     self.last_reports[report_id] = res
+                    if save_data:
+                        reports_to_bulk_save.append(save_data)
+        
+        if reports_to_bulk_save:
+            DatabaseManager.save_reports_bulk(reports_to_bulk_save)
         if new == 12 or (full_run and page < 20):
             page += 1
             self.logger.debug(
@@ -250,7 +271,7 @@ class ReportManager:
                         extra["defence_losses"] = self.re_unit(
                             Extractor.units_in_total(def_units[2])
                         )
-                        if self.game_state and "player" in self.game_state and str(to_player) == str(self.game_state["player"]["id"]):
+                        if str(to_player) == str(self.game_state["player"]["id"]):
                             losses = extra["defence_losses"]
         results = re.search(r'(?s)(<table id="attack_results".+?</table>)', report)
         report = report.replace('<span class="grey">.</span>', "")
@@ -294,39 +315,33 @@ class ReportManager:
 
         # --- PERFORMANCE (POINT 3) ---
         # Update farm statistics immediately when processing the report
-        player_id = self.game_state.get("player", {}).get("id") if self.game_state else None
-        if attack_type == "attack" and to_village and (not player_id or str(from_player) == str(player_id)):
+        if attack_type == "attack" and to_village and str(from_player) == str(self.game_state["player"]["id"]):
             try:
                 self.update_farm_cache_stats(to_village, extra, losses)
             except Exception as e:
                 self.logger.warning(f"Failed to update farm cache for {to_village}: {e}")
         # --- END PERFORMANCE ---
 
-        # --- DB PERSISTENCE ---
+        # --- DB PERSISTENCE (Moved to Bulk) ---
+        loot_dict = extra.get("loot", {})
+        scout_res = extra.get("resources", None)
+        scout_bld = extra.get("buildings", None)
+        
+        # Deduce win mathematically or via HTML
+        html_won_indicators = ['image_attack_won', 'Pełna wygrana', 'wygrał', 'green.webp', 'yellow.webp']
+        html_loss_indicators = ['image_attack_lost', 'Porażka', 'red.webp']
+        
+        won = (losses == {})
+        if any(ind in report for ind in html_won_indicators): won = True
+        elif any(ind in report for ind in html_loss_indicators): won = False
+        elif losses and extra.get("units_sent"):
+            total_sent = sum(extra["units_sent"].values())
+            total_lost = sum(losses.values())
+            won = total_lost < total_sent
+
+        # Save attack record immediately since it yields an ID for losses
         if _DB_AVAILABLE:
             try:
-                loot_dict = extra.get("loot", {})
-                scout_res = extra.get("resources", None)
-                scout_bld = extra.get("buildings", None)
-                # Check HTML indications of win/loss
-                html_won_indicators = [
-                    'image_attack_won', 'Pełna wygrana', 'wygrał', 'green.webp', 'yellow.webp',
-                ]
-                html_loss_indicators = [
-                    'image_attack_lost', 'Porażka', 'red.webp',
-                ]
-                
-                # Deduce win mathematically or via HTML
-                won = (losses == {})
-                if any(ind in report for ind in html_won_indicators):
-                    won = True
-                elif any(ind in report for ind in html_loss_indicators):
-                    won = False
-                elif losses and extra.get("units_sent"):
-                    total_sent = sum(extra["units_sent"].values())
-                    total_lost = sum(losses.values())
-                    won = total_lost < total_sent
-
                 attack_id = DatabaseManager.save_attack(
                     origin_id   = from_village,
                     target_id   = to_village,
@@ -344,29 +359,16 @@ class ReportManager:
                         {k: int(v) for k, v in extra["defence_losses"].items()},
                         side="defender"
                     )
-                DatabaseManager.save_report(
-                    report_id   = report_id,
-                    report_type = attack_type,
-                    origin_id   = from_village,
-                    dest_id     = to_village,
-                    extra       = extra,
-                    loot        = {k: int(v) for k, v in loot_dict.items()},
-                    losses      = {k: int(v) for k, v in losses.items()} if losses else {},
-                    scout_resources = {k: int(v) for k, v in scout_res.items()} if scout_res else None,
-                    scout_buildings = scout_bld,
-                )
-                # Update production estimate from scout building data
                 if scout_bld and to_village:
                     DatabaseManager.update_village_production(to_village, scout_bld)
             except Exception as _db_err:
                 self.logger.debug("DB persistence error in attack_report: %s", _db_err)
-        # --- END DB PERSISTENCE ---
 
-        res = self.put(
+        res, save_data = self.put(
             report_id, attack_type, from_village, to_village, data=extra, losses=losses
         )
         self.last_reports[report_id] = res
-        return True
+        return save_data
 
     # --- PERFORMANCE (POINT 3) ---
     def update_farm_cache_stats(self, village_id, extra_data, losses):
@@ -453,7 +455,7 @@ class ReportManager:
             data=None,
     ):
         """
-        Creates a report file
+        Creates a report file and returns data for DB bulk save
         """
         if losses is None:
             losses = {}
@@ -470,7 +472,23 @@ class ReportManager:
         self.logger.info(
             "Processed %s report with id %s", report_type, str(report_id)
         )
-        return output
+
+        save_data = None
+        if _DB_AVAILABLE:
+            loot_dict = data.get("loot") or data.get("resources") or {}
+            save_data = {
+                "report_id":   report_id,
+                "report_type": report_type,
+                "origin_id":   origin_village,
+                "dest_id":     dest_village,
+                "extra":       data,
+                "loot":        {k: int(v) for k, v in loot_dict.items()} if loot_dict else {},
+                "losses":      {k: int(v) for k, v in losses.items()} if losses else {},
+                "scout_resources": data.get("resources"),
+                "scout_buildings": data.get("buildings"),
+            }
+
+        return output, save_data
 
 
 class ReportCache:

@@ -1,3 +1,7 @@
+"""
+Tests for test_integration.
+Migrated from root directory during AI-Update cleanup.
+"""
 import unittest
 import os
 import json

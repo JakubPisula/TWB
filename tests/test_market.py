@@ -1,3 +1,7 @@
+"""
+Tests for test_market.
+Migrated from root directory during AI-Update cleanup.
+"""
 import re
 
 html = """
@@ -18,4 +22,3 @@ if results:
     print(loot)
 else:
     print("No results")
-

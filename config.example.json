@@ -13,6 +13,12 @@
     "enabled": false,
     "connection_string": "file://cache/logs/twb_{ts}.log"
   },
+  "database": {
+    "url": "sqlite:///cache/twb.db",
+    "pool_size": 5,
+    "max_overflow": 10,
+    "prune_days": 30
+  },
   "notifications": {
     "enabled": false,
     "channel_id": "",

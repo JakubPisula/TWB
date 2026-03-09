@@ -17,7 +17,6 @@ from game.resources import ResourceManager
 from game.snobber import SnobManager
 from game.troopmanager import TroopManager
 from core.exceptions import *
-from core.database import DatabaseManager, DBVillageSettings, DBVillage
 
 
 class Village:
@@ -772,29 +771,4 @@ class Village:
                 village_entry["farm_bag"] = None
         else:
             village_entry["farm_bag"] = None
-
-        db_s = DatabaseManager._session()
-        if db_s:
-            try:
-                # Upsert village base data
-                village_db = db_s.query(DBVillage).filter_by(id=str(self.village_id)).first()
-                if not village_db:
-                    village_db = DBVillage(id=str(self.village_id), name=self.game_data["village"]["name"])
-                    db_s.add(village_db)
-                else:
-                    village_db.name = self.game_data["village"]["name"]
-                
-                # Upsert village settings
-                settings_db = db_s.query(DBVillageSettings).filter_by(village_id=str(self.village_id)).first()
-                if not settings_db:
-                    settings_db = DBVillageSettings(village_id=str(self.village_id), settings=village_entry)
-                    db_s.add(settings_db)
-                else:
-                    settings_db.settings = village_entry
-                
-                db_s.commit()
-            except Exception as e:
-                self.logger.error(f"Failed to save village managed state to DB: {e}")
-                db_s.rollback()
-            finally:
-                db_s.close()
+        FileManager.save_json_file(village_entry, f"cache/managed/{self.village_id}.json")

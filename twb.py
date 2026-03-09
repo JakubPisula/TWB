@@ -41,6 +41,7 @@ from manager import VillageManager
 from pages.overview import OverviewPage
 from core.exceptions import UnsupportedPythonVersion
 from core.extractors import Extractor
+from core.database import DatabaseManager
 import subprocess
 
 # --- LOGGING IMPROVEMENT ---
@@ -409,6 +410,16 @@ class TWB:
             
         self.wrapper.headers["user-agent"] = config["bot"]["user_agent"]
         self.wrapper.start()
+
+        # Database initialization with potential PostgreSQL URL
+        db_url = config.get("database", {}).get("url")
+        from core.database import get_engine
+        get_engine(db_url)
+        
+        # Prune old data on startup if configured (default 30 days)
+        prune_days = config.get("database", {}).get("prune_days", 30)
+        if prune_days > 0:
+            DatabaseManager.prune_old_data(days=prune_days)
         for vid in config["villages"]:
             v = Village(wrapper=self.wrapper, village_id=vid)
             self.villages.append(copy.deepcopy(v))
@@ -528,8 +539,10 @@ class TWB:
         directories = [
             "cache/attacks",
             "cache/reports",
+            "cache/villages",
             "cache/world",
             "cache/logs",
+            "cache/managed",
             "cache/hunter"
         ]
         FileManager.create_directories(directories)
@@ -598,6 +611,13 @@ def self_config_test():
 
 
 if __name__ == "__main__":
+    if "-h" in sys.argv or "--help" in sys.argv:
+        print("Usage: python3 twb.py [options]")
+        print("Options:")
+        print("  -v, --verbose  Enable DEBUG logging")
+        print("  -q, --quiet    Enable WARNING logging only")
+        print("  -i             Perform integrity and config checks")
+        sys.exit(0)
     if "-i" in sys.argv:
         logging.info("Bot integrity check passed")
         check_conf = self_config_test()

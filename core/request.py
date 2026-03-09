@@ -20,20 +20,6 @@ class WebWrapper:
     """
     WebWrapper object for sending HTTP requests
     """
-    web = None
-    headers = {
-        'user-agent': 'Mozilla/5.0 (Windows NT 6.3; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.97 Safari/537.36',
-        'upgrade-insecure-requests': '1'
-    }
-    endpoint = None
-    logger = logging.getLogger("Requests")
-    server = None
-    last_response = None
-    last_h = None
-    priority_mode = False
-    auth_endpoint = None
-    reporter = None
-    delay = 1.0
 
     def __init__(self, url, server=None, endpoint=None, reporter_enabled=False, reporter_constr=None):
         """
@@ -44,6 +30,16 @@ class WebWrapper:
         self.server = server
         self.endpoint = endpoint
         self.reporter = ReporterObject(enabled=reporter_enabled, connection_string=reporter_constr)
+        self.logger = logging.getLogger("Requests")
+        # Per-instance mutable headers dict — must NOT be a class-level default
+        self.headers: dict = {
+            'user-agent': 'Mozilla/5.0 (Windows NT 6.3; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.97 Safari/537.36',
+            'upgrade-insecure-requests': '1',
+        }
+        self.last_response = None
+        self.last_h = None
+        self.priority_mode = False
+        self.delay = 1.0
 
     def post_process(self, response):
         """
@@ -121,153 +117,186 @@ class WebWrapper:
         self.headers['Cookie'] = cookie_str
         self.web.cookies.clear()
         
-    def start(self, ):
-        """
-        Start the bot and verify whether the last session is still valid
-        """
+    # ------------------------------------------------------------------
+    # Session helpers
+    # ------------------------------------------------------------------
+
+    _FORBIDDEN_SERVERS = ["www", "plemiona", "tribalwars", "die-staemme"]
+
+    def _apply_endpoint_from_session(self, session_data: dict) -> None:
+        """Update self.endpoint and self.server from a session dict if the
+        extracted server name is not on the forbidden list."""
+        ep = session_data.get("endpoint", "")
+        if not ep:
+            return
         try:
-            session_data = FileManager.load_json_file("cache/session.json")
+            extracted = ep.split("//")[1].split(".")[0]
+            if extracted and extracted not in self._FORBIDDEN_SERVERS:
+                self.endpoint = ep
+                self.server = extracted
         except Exception:
-            session_data = None
-            
-        if session_data:
-            import urllib.parse
-            # Set cookies explicitly decoding url encodings
-            if session_data.get('endpoint'):
-                ep = session_data['endpoint']
-                forbidden_servers = ["www", "plemiona", "tribalwars", "die-staemme"]
-                try:
-                    extracted_server = ep.split("//")[1].split(".")[0]
-                    if extracted_server not in forbidden_servers and len(extracted_server) > 0:
-                        self.endpoint = ep
-                        self.server = extracted_server
-                except Exception:
-                    pass
-            self.set_cookies(session_data['cookies'])
-            get_test = self.get_url("game.php?screen=overview")
-            if "game.php" in get_test.url:
-                return True
-            self.logger.warning("Current session cache not valid")
-            import os
+            pass
+
+    def _cookies_to_header_string(self, cookies: dict) -> str:
+        """Convert a cookies dict to a raw Cookie header string.
+
+        If the dict has a single 'Cookie' key with the raw string already
+        encoded, return that directly (legacy browser-extension format).
+        """
+        if "Cookie" in cookies:
+            return cookies["Cookie"]
+        return "; ".join(f"{k}={v}" for k, v in cookies.items())
+
+    def _verify_session_via_urllib(self, cookie_str: str) -> bool:
+        """Verify that the supplied cookie string produces a valid session.
+
+        Uses urllib (not requests) so the Cookie header is sent verbatim
+        without the requests library re-encoding auth tokens.
+        Returns True on HTTP 200, False otherwise.
+        """
+        import urllib.request
+
+        class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+            def http_error_302(self, req, fp, code, msg, headers):  # noqa: N802
+                return fp
+
+        test_url = urljoin(self.endpoint, "game.php?screen=overview")
+        opener = urllib.request.build_opener(_NoRedirectHandler())
+        req = urllib.request.Request(test_url)
+        req.add_header("User-Agent", self.headers.get("user-agent", ""))
+        req.add_header("Cookie", cookie_str)
+        try:
+            res = opener.open(req)
+            return res.getcode() == 200
+        except Exception as e:
+            self.logger.warning("Session verification request failed: %s", e)
+            return False
+
+    def _load_session_file(self) -> dict | None:
+        """Load and return the session cache file, or None on any error."""
+        try:
+            return FileManager.load_json_file("cache/session.json")
+        except Exception:
+            return None
+
+    def _remove_session_file(self) -> None:
+        """Delete the session cache file, ignoring errors."""
+        try:
+            import os as _os
+            _os.remove("cache/session.json")
+        except Exception:
+            pass
+
+    def _try_apply_cached_session(self, session_data: dict) -> bool:
+        """Apply a session dict (cookies + endpoint), verify it, return True on success."""
+        self._apply_endpoint_from_session(session_data)
+
+        # Sync user-agent from browser into config
+        if session_data.get("user_agent"):
+            self.headers["user-agent"] = session_data["user_agent"]
             try:
-                os.remove("cache/session.json")
+                conf = FileManager.load_json_file("config.json")
+                if conf:
+                    conf["bot"]["user_agent"] = session_data["user_agent"]
+                    FileManager.save_json_file(conf, "config.json")
             except Exception:
                 pass
 
+        cookie_str = self._cookies_to_header_string(session_data["cookies"])
+        self.headers["Cookie"] = cookie_str
         self.web.cookies.clear()
-        print("Waiting for browser cookie... (Use the Chrome Extension to sync automatically or paste the string here and press Enter)")
-        
+
+        self.logger.info("Loaded %d cookies from session cache", len(session_data["cookies"]))
+        self.logger.debug("Verifying session against: %s", self.endpoint)
+
+        if self._verify_session_via_urllib(cookie_str):
+            self.logger.info("Session verified successfully.")
+            return True
+
+        self.logger.warning(
+            "Session cache invalid (server rejected cookies). Removing cache."
+        )
+        self._remove_session_file()
+        return False
+
+    def _wait_for_cookie_input(self) -> str:
+        """Block until the user pastes a cookie string into stdin.
+
+        Polls stdin with a 1-second select timeout so that the session file
+        written by the web panel is also checked on every iteration.
+        Returns the raw cookie string entered by the user, or "" if the
+        session file was populated before any keyboard input arrived (caller
+        should check the file again).
+        """
         import sys
         import select
-        import time
-        cinp = ""
-        while True:
-            # Sprawdź czy Web Panel uzupełnił już plik cache
-            try:
-                session_data = FileManager.load_json_file("cache/session.json")
-            except Exception:
-                session_data = None
-                
-            if session_data and "cookies" in session_data and session_data["cookies"]:
-                if session_data.get("endpoint"):
-                    ep = session_data["endpoint"]
-                    forbidden_servers = ["www", "plemiona", "tribalwars", "die-staemme"]
-                    try:
-                        extracted_server = ep.split("//")[1].split(".")[0]
-                        if extracted_server not in forbidden_servers and len(extracted_server) > 0:
-                            self.endpoint = ep
-                            self.server = extracted_server
-                    except Exception:
-                        pass
-                
-                # Update User Agent from Browser
-                if session_data.get("user_agent"):
-                    self.headers["user-agent"] = session_data["user_agent"]
-                    try:
-                        import json
-                        conf = FileManager.load_json_file("config.json")
-                        conf["bot"]["user_agent"] = session_data["user_agent"]
-                        FileManager.save_json_file(conf, "config.json")
-                    except Exception:
-                        pass
-                # Load cookies into request session carefully handling url decoding
-                import urllib.parse
-                # Set raw Cookie String header to avoid `requests` mutating pl_auth characters
-                cookie_str = "; ".join([f"{k}={v}" for k, v in session_data['cookies'].items()])
-                for k, v in session_data['cookies'].items():
-                    if k == "Cookie":
-                        cookie_str = v
-                        break
-                self.headers["Cookie"] = cookie_str
-                
-                get_test_url = urljoin(self.endpoint, "game.php?screen=overview")
-                try:
-                    import urllib.request
-                    class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
-                        def http_error_302(self, req, fp, code, msg, headers):
-                            return fp
-                    opener = urllib.request.build_opener(NoRedirectHandler())
-                    urllib.request.install_opener(opener)
-                    
-                    req_test = urllib.request.Request(get_test_url)
-                    req_test.add_header('User-Agent', self.headers.get("user-agent", ""))
-                    req_test.add_header('Cookie', cookie_str)
-                    
-                    res_test = urllib.request.urlopen(req_test)
-                    
-                    if getattr(self, "logger", None):
-                        self.logger.info(f"Loaded {len(session_data['cookies'])} cookies from Web Panel!")
-                        self.logger.debug(f"URLLIB Request URL: {get_test_url}")
-                        self.logger.debug(f"URLLIB Header User-Agent: {self.headers.get('user-agent', '')}")
-                        self.logger.debug(f"URLLIB Header Cookie: {cookie_str}")
-                    
-                    if res_test.getcode() == 200:
-                        self.logger.info("Found synced cookies from Web Panel! Login successful.")
-                        # Load cookies into request session correctly. 
-                        # Crucial fix: Do not set them via s.cookies.update() because requests library changes auth hashes.
-                        # Setting self.headers["Cookie"] above is enough. We MUST clear requests cookies.
-                        self.web.cookies.clear()
-                        return True
-                    else:
-                        self.logger.warning(f"Cookies from Web Panel are invalid. Server returned redirect or error (code: {res_test.getcode()})")
-                        self.logger.warning(f"Sent cookies were: {session_data['cookies'].keys()}")
-                        try:
-                            os.remove("cache/session.json")
-                        except Exception:
-                            pass
-                except Exception as e:
-                    self.logger.warning(f"Error during verify: {e}")
-                    try:
-                        os.remove("cache/session.json")
-                    except Exception:
-                        pass
-                
-            # Sprawdź bez blokowania wstrzymania dla wejścia z klawiatury (max 1 sekunda na cykl)
-            if sys.stdin in select.select([sys.stdin], [], [], 1.0)[0]:
-                cinp = sys.stdin.readline().strip()
-                if cinp:
-                    # Ktoś wpisał własne ręczne ciastko
-                    break
 
-        cookies = {}
-        for itt in cinp.split(';'):
-            itt = itt.strip()
-            kvs = itt.split("=")
-            if len(kvs) > 1:
-                k = kvs[0]
-                v = '='.join(kvs[1:])
-                cookies[k] = v
+        while True:
+            session_data = self._load_session_file()
+            if session_data and session_data.get("cookies"):
+                # Web panel wrote the session — signal caller via empty string
+                return ""
+
+            if sys.stdin in select.select([sys.stdin], [], [], 1.0)[0]:
+                line = sys.stdin.readline().strip()
+                if line:
+                    return line
+
+    def start(self):
+        """Start the bot and verify whether the last session is still valid."""
+        # 1. Try existing session cache
+        session_data = self._load_session_file()
+        if session_data:
+            self._apply_endpoint_from_session(session_data)
+            self.set_cookies(session_data["cookies"])
+            test = self.get_url("game.php?screen=overview")
+            if test and "game.php" in test.url:
+                return True
+            self.logger.warning("Existing session cache not valid, clearing.")
+            self._remove_session_file()
+
+        # 2. Wait for session — either from web panel file or keyboard input
+        self.web.cookies.clear()
+        print(
+            "Waiting for browser cookie... "
+            "(Use the Chrome Extension to sync automatically or paste the string here and press Enter)"
+        )
+
+        while True:
+            session_data = self._load_session_file()
+            if session_data and session_data.get("cookies"):
+                if self._try_apply_cached_session(session_data):
+                    return True
+                # Session file was invalid and removed; keep waiting
+                continue
+
+            raw_input = self._wait_for_cookie_input()
+            if not raw_input:
+                # Session file appeared while waiting — loop back to check it
+                continue
+
+            # User pasted a cookie string manually
+            break
+
+        # 3. Parse manually-entered cookie string
+        cookies: dict = {}
+        for part in raw_input.split(";"):
+            part = part.strip()
+            if "=" in part:
+                k, _, v = part.partition("=")
+                cookies[k.strip()] = v.strip()
+
         self.web.cookies.update(cookies)
         self.logger.info("Game Endpoint: %s", self.endpoint)
 
+        # Merge cookies from the requests jar back into the dict
         for c in self.web.cookies:
             cookies[c.name] = c.value
 
-        FileManager.save_json_file({
-            'endpoint': self.endpoint,
-            'server': self.server,
-            'cookies': cookies
-        }, "cache/session.json")
+        FileManager.save_json_file(
+            {"endpoint": self.endpoint, "server": self.server, "cookies": cookies},
+            "cache/session.json",
+        )
         return True
 
     def get_action(self, village_id, action):

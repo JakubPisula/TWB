@@ -15,35 +15,9 @@ class TroopManager:
     """
     Troopmanager class
     """
-    can_recruit = True
-    can_attack = True
-    can_dodge = False
-    can_scout = True
-    can_farm = True
-    can_gather = True
-    can_fix_queue = True
-    randomize_unit_queue = True
 
-    queue = []
-    troops = {}
-
-    total_troops = {}
-
-    _research_wait = 0
-
-    wrapper = None
-    village_id = None
-    recruit_data = {}
-    game_data = {}
-    logger = None
-    max_batch_size = 50
-
-    _waits = {}
-
-    wanted = {"barracks": {}}
-
-    # Maps troops to the building they are created from
-    unit_building = {
+    # Maps troops to the building they are created from — read-only, safe as class constant
+    unit_building: dict = {
         "spear": "barracks",
         "sword": "barracks",
         "axe": "barracks",
@@ -56,14 +30,8 @@ class TroopManager:
         "catapult": "garage",
     }
 
-    wanted_levels = {}
-
-    last_gather = 0
-
-    resman = None
-    template = None
-
-    carry_capacity = {
+    # Carry capacity per unit — read-only, safe as class constant
+    carry_capacity: dict = {
         "spear": 25,
         "sword": 15,
         "axe": 10,
@@ -84,12 +52,33 @@ class TroopManager:
         """
         self.wrapper = wrapper
         self.village_id = village_id
-        self.wait_for = {}
-        self.wait_for[village_id] = {"barracks": 0, "stable": 0, "garage": 0}
-        if not self.resman:
-            self.resman = ResourceManager(
-                wrapper=self.wrapper, village_id=self.village_id
-            )
+        self.logger = None
+        # Per-instance mutable state
+        self.queue: list = []
+        self.troops: dict = {}
+        self.total_troops: dict = {}
+        self.recruit_data: dict = {}
+        self.game_data: dict = {}
+        self.wanted: dict = {"barracks": {}}
+        self.wanted_levels: dict = {}
+        self._waits: dict = {}
+        self.wait_for: dict = {village_id: {"barracks": 0, "stable": 0, "garage": 0}}
+        # Config / tunables
+        self.can_recruit = True
+        self.can_attack = True
+        self.can_dodge = False
+        self.can_scout = True
+        self.can_farm = True
+        self.can_gather = True
+        self.can_fix_queue = True
+        self.randomize_unit_queue = True
+        self.max_batch_size = 50
+        self.last_gather = 0
+        self._research_wait = 0
+        self.resman = None
+        self.template = None
+        # Initialise resource manager
+        self.resman = ResourceManager(wrapper=self.wrapper, village_id=self.village_id)
 
     # --- PERFORMANCE (POINT 2) ---
     def update_totals(self, overview_game_data, overview_html):

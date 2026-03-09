@@ -4,10 +4,23 @@ import json
 import logging
 import re
 import time
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Union
 
 
 logger = logging.getLogger("Extractor")
+
+# Type alias accepted by all Extractor methods
+_ResponseLike = Union[str, Any]  # str or requests.Response (avoid hard import)
+
+
+def _to_text(res: _ResponseLike) -> str:
+    """Normalise an HTTP response object or plain string to text.
+
+    Replaces the repeated ``if type(res) != str: res = res.text`` pattern
+    found throughout Extractor methods, while also using the correct
+    ``isinstance`` check that works with subclasses.
+    """
+    return res if isinstance(res, str) else res.text
 
 
 _ROW_PATTERN = re.compile(
@@ -35,36 +48,34 @@ class Extractor:
     TODO: use compiled various for CPU efficiency
     """
     @staticmethod
-    def village_data(res):
+    def village_data(res: _ResponseLike):
         """
         Detects village data on a page
         """
-        if type(res) != str:
-            res = res.text
-        grabber = re.search(r'var village = (.+);', res)
+        text = _to_text(res)
+        grabber = re.search(r'var village = (.+);', text)
         if grabber:
             data = grabber.group(1)
             return json.loads(data, strict=False)
 
     @staticmethod
-    def game_state(res):
+    def game_state(res: _ResponseLike):
         """
         Detects the game state that is available on most pages
         """
-        if type(res) != str:
-            res = res.text
-        grabber = re.search(r'TribalWars\.updateGameData\((.+?)\);', res)
+        text = _to_text(res)
+        grabber = re.search(r'TribalWars\.updateGameData\((.+?)\);', text)
         if grabber:
             data = grabber.group(1)
             return json.loads(data, strict=False)
 
     @staticmethod
-    def building_data(res):
+    def building_data(res: _ResponseLike):
         """
         Fetches building data from the main building
         """
-        if type(res) != str:
-            res = res.text
+        text = _to_text(res)
+        res = text  # alias for rest of the method
         dre = re.search(r'(?s)BuildingMain.buildings = (\{.+?\});', res)
         if dre:
             return json.loads(dre.group(1), strict=False)
@@ -95,12 +106,11 @@ class Extractor:
         return None
 
     @staticmethod
-    def get_quests(res):
+    def get_quests(res: _ResponseLike):
         """
         Gets quest data on almost any page
         """
-        if type(res) != str:
-            res = res.text
+        res = _to_text(res)
         get_quests = re.search(r'Quests.setQuestData\((\{.+?\})\);', res)
         if get_quests:
             result = json.loads(get_quests.group(1), strict=False)
@@ -111,12 +121,11 @@ class Extractor:
         return None
 
     @staticmethod
-    def get_quest_rewards(res):
+    def get_quest_rewards(res: _ResponseLike):
         """
         Detects if there are rewards available for quests
         """
-        if type(res) != str:
-            res = res.text
+        res = _to_text(res)
         get_rewards = re.search(r'RewardSystem\.setRewards\(\s*(\[\{.+?\}\]),', res)
         rewards = []
         if get_rewards:
@@ -128,24 +137,22 @@ class Extractor:
         return rewards
 
     @staticmethod
-    def map_data(res):
+    def map_data(res: _ResponseLike):
         """
         Detects other villages on the map page
         """
-        if type(res) != str:
-            res = res.text
+        res = _to_text(res)
         data = re.search(r'(?s)TWMap.sectorPrefech = (\[(.+?)\]);', res)
         if data:
             result = json.loads(data.group(1), strict=False)
             return result
 
     @staticmethod
-    def smith_data(res):
+    def smith_data(res: _ResponseLike):
         """
         Gets smith data
         """
-        if type(res) != str:
-            res = res.text
+        res = _to_text(res)
         data = re.search(r'(?s)BuildingSmith.techs = (\{.+?\});', res)
         if data:
             result = json.loads(data.group(1), strict=False)
@@ -153,12 +160,11 @@ class Extractor:
         return None
 
     @staticmethod
-    def premium_data(res):
+    def premium_data(res: _ResponseLike):
         """
         Detects data on the premium exchange page
         """
-        if type(res) != str:
-            res = res.text
+        res = _to_text(res)
         data = re.search(r'(?s)PremiumExchange.receiveData\((.+?)\);', res)
         if data:
             result = json.loads(data.group(1), strict=False)
@@ -166,12 +172,11 @@ class Extractor:
         return None
 
     @staticmethod
-    def recruit_data(res):
+    def recruit_data(res: _ResponseLike):
         """
         Fetches recruit data for the current building
         """
-        if type(res) != str:
-            res = res.text
+        res = _to_text(res)
         data = re.search(r'(?s)unit_managers.units = (\{.+?\});', res)
         if data:
             raw = data.group(1)
@@ -181,12 +186,11 @@ class Extractor:
             return result
 
     @staticmethod
-    def units_in_village(res):
+    def units_in_village(res: _ResponseLike):
         """
         Detects all units in the village
         """
-        if type(res) != str:
-            res = res.text
+        res = _to_text(res)
         matches = re.search(r'<table id="units_home".*?</tr>(.*?)</tr>', res, re.DOTALL)
         # We get the start of the table and grab the 2nd row (Where "From this village" troops are located)
         if matches:
@@ -201,12 +205,11 @@ class Extractor:
         return []
 
     @staticmethod
-    def active_building_queue(res):
+    def active_building_queue(res: _ResponseLike):
         """
         Detects queued building entries
         """
-        if type(res) != str:
-            res = res.text
+        res = _to_text(res)
         builder = re.search('(?s)<table id="build_queue"(.+?)</table>', res)
         if not builder:
             return 0
@@ -214,12 +217,11 @@ class Extractor:
         return builder.group(1).count('<a class="btn btn-cancel"')
 
     @staticmethod
-    def active_recruit_queue(res):
+    def active_recruit_queue(res: _ResponseLike):
         """
         Detects active recruitment entries
         """
-        if type(res) != str:
-            res = res.text
+        res = _to_text(res)
         builder = re.findall(r'(?s)TrainOverview\.cancelOrder\((\d+)\)', res)
         return builder
 
@@ -458,12 +460,11 @@ class Extractor:
         return data
 
     @staticmethod
-    def units_in_total(res):
+    def units_in_total(res: _ResponseLike):
         """
         Gets total amount of units in a village
         """
-        if type(res) != str:
-            res = res.text
+        res = _to_text(res)
         # hide units from other villages
         res = re.sub(r'(?s)<span class="village_anchor.+?</tr>', '', res)
         
@@ -536,45 +537,41 @@ class Extractor:
         return {"current": current, "max": maximum}
 
     @staticmethod
-    def attack_form(res):
+    def attack_form(res: _ResponseLike):
         """
-        Detects input fiels in the attack form
+        Detects input fields in the attack form
         ... because there are many :)
         """
-        if type(res) != str:
-            res = res.text
+        res = _to_text(res)
         data = re.findall(r'(?s)<input.+?name="(.+?)".+?value="(.*?)"', res)
         return data
 
     @staticmethod
-    def attack_duration(res):
+    def attack_duration(res: _ResponseLike):
         """
         Detects the duration of an attack
         """
-        if type(res) != str:
-            res = res.text
+        res = _to_text(res)
         data = re.search(r'<span class="relative_time" data-duration="(\d+)"', res)
         if data:
             return int(data.group(1))
         return 0
 
     @staticmethod
-    def report_table(res):
+    def report_table(res: _ResponseLike):
         """
         Fetches information from a report
         """
-        if type(res) != str:
-            res = res.text
+        res = _to_text(res)
         data = re.findall(r'(?s)class="report-link" data-id="(\d+)"', res)
         return data
 
     @staticmethod
-    def get_daily_reward(res):
+    def get_daily_reward(res: _ResponseLike):
         """
         Detects if there are unopened daily rewards
         """
-        if type(res) != str:
-            res = res.text
+        res = _to_text(res)
         get_daily = re.search(r'DailyBonus.init\((\s+\{.*\}),', res)
         if not get_daily:
             return None

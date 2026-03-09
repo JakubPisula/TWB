@@ -1,10 +1,15 @@
 import json
 import os
+import re
+import secrets
 import sys
+import time
+from functools import wraps
+from threading import Lock
+
 sys.path.insert(0, "../")
 
 from flask import Flask, jsonify, send_from_directory, request, render_template
-from flask_cors import CORS
 
 try:
     from webmanager.helpfile import help_file, buildings
@@ -23,13 +28,80 @@ except Exception:
 bm = BotManager()
 
 app = Flask(__name__)
-# CORS and PNA are handled manually below
-app.config["DEBUG"] = True
+# Debug mode controlled by environment variable — never hardcode True in production
+app.config["DEBUG"] = os.environ.get("FLASK_DEBUG", "0") == "1"
+
+# ---------------------------------------------------------------------------
+# API token authentication
+# ---------------------------------------------------------------------------
+# Set TWB_API_TOKEN in the environment (or leave empty to disable auth for
+# local-only deployments).  Every mutating / sensitive endpoint checks this.
+_API_TOKEN: str = os.environ.get("TWB_API_TOKEN", "")
+
+
+def _token_valid(token: str) -> bool:
+    """Constant-time comparison to prevent timing attacks."""
+    if not _API_TOKEN:
+        # No token configured → auth disabled (backward-compatible default)
+        return True
+    if not token:
+        return False
+    return secrets.compare_digest(token, _API_TOKEN)
+
+
+def require_auth(f):
+    """Decorator that enforces API token authentication on sensitive endpoints."""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        token = (
+            request.headers.get("X-Api-Token")
+            or request.args.get("token")
+            or request.form.get("token")
+        )
+        if not _token_valid(token or ""):
+            return jsonify({"error": "Unauthorized"}), 401
+        return f(*args, **kwargs)
+    return decorated
+
+
+# ---------------------------------------------------------------------------
+# Sync cache with TTL to avoid repeated disk I/O on every page request
+# ---------------------------------------------------------------------------
+_sync_cache: dict = {"data": None, "ts": 0.0}
+_sync_lock = Lock()
+_SYNC_TTL = 5  # seconds
+
+
+def sync_cached() -> dict:
+    """Return sync() result cached for up to _SYNC_TTL seconds."""
+    with _sync_lock:
+        if _sync_cache["data"] is not None and time.time() - _sync_cache["ts"] < _SYNC_TTL:
+            return _sync_cache["data"]
+        data = sync()
+        _sync_cache["data"] = data
+        _sync_cache["ts"] = time.time()
+        return data
+
+
+def _invalidate_sync_cache() -> None:
+    """Force cache invalidation after a write operation."""
+    with _sync_lock:
+        _sync_cache["data"] = None
+        _sync_cache["ts"] = 0.0
+
+
+# ---------------------------------------------------------------------------
+# Template name validation for path-traversal prevention
+# ---------------------------------------------------------------------------
+_SAFE_TEMPLATE_RE = re.compile(r'^[a-zA-Z0-9_\-]+$')
+_TEMPLATES_DIR = os.path.realpath(
+    os.path.join(os.path.dirname(__file__), '..', 'templates', 'builder')
+)
 
 @app.route('/<path:path>', methods=['OPTIONS'])
 @app.route('/', methods=['OPTIONS'])
 def handle_options(path=None):
-    app.logger.error(f"DEBUG: Preflight for {path} from {request.remote_addr}. Headers: {dict(request.headers)}")
+    app.logger.debug("Preflight for %s from %s", path, request.remote_addr)
     resp = app.make_default_options_response()
     resp.headers["Access-Control-Allow-Origin"] = "*"
     resp.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS, PUT, DELETE"
@@ -125,8 +197,7 @@ def fancy(key):
 
 
 def pre_process_config():
-    # TODO get generic config
-    config = sync()['config']
+    config = sync_cached()['config']
     to_hide = ["build", "villages"]
     sections = {}
     for section in config:
@@ -149,11 +220,15 @@ def pre_process_config():
 
 
 def pre_process_village_config(village_id):
-    config = sync()['config']['villages']
+    config = sync_cached()['config']['villages']
     if village_id in config:
         config = config[village_id]
     else:
-        config = config[config.keys()[0]]
+        # dict.keys() is not subscriptable in Python 3 — use next(iter(...))
+        first_key = next(iter(config), None)
+        if first_key is None:
+            return ""
+        config = config[first_key]
     config_data = ""
     for parameter in config:
         value = config[parameter]
@@ -255,7 +330,7 @@ def cookie_webhook():
     Updates the local session cache so the bot uses the fresh cookie without restart.
     """
     if request.method == 'OPTIONS':
-        app.logger.error(f"DEBUG: Preflight cookie_webhook from {request.remote_addr}")
+        app.logger.debug("Preflight cookie_webhook from %s", request.remote_addr)
         resp = app.make_default_options_response()
         resp.headers["Access-Control-Allow-Origin"] = "*"
         resp.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS, GET"
@@ -263,7 +338,7 @@ def cookie_webhook():
         resp.headers["Access-Control-Allow-Private-Network"] = "true"
         return resp
 
-    app.logger.error(f"DEBUG: POST cookie_webhook from {request.remote_addr}")
+    app.logger.debug("POST cookie_webhook from %s", request.remote_addr)
     data = request.get_json(force=True, silent=True)
     if not data or 'cookies' not in data:
         app.logger.warning(f"Invalid cookie_webhook POST: body={request.data}")
@@ -321,7 +396,7 @@ def api_plugin_report():
     Verifies if report exists, if not, parses it using ReportManager.
     """
     if request.method == 'OPTIONS':
-        app.logger.error(f"DEBUG: Preflight plugin_report from {request.remote_addr}")
+        app.logger.debug("Preflight plugin_report from %s", request.remote_addr)
         resp = app.make_default_options_response()
         resp.headers["Access-Control-Allow-Origin"] = "*"
         resp.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS, GET"
@@ -329,7 +404,7 @@ def api_plugin_report():
         resp.headers["Access-Control-Allow-Private-Network"] = "true"
         return resp
 
-    app.logger.error(f"DEBUG: POST plugin_report from {request.remote_addr}")
+    app.logger.debug("POST plugin_report from %s", request.remote_addr)
     data = request.get_json(force=True, silent=True)
     if not data or 'html' not in data or 'report_id' not in data:
         return jsonify({'ok': False, 'message': 'Brak HTML lub ID raportu'}), 400
@@ -428,6 +503,7 @@ def api_plugin_map():
         return jsonify({'ok': False, 'error': str(e)}), 500
 
 @app.route('/api/force_reports', methods=['POST'])
+@require_auth
 def api_force_reports():
     """
     Trigger reading backwards historical reports for statistics.
@@ -479,12 +555,14 @@ def get_web_logs():
         return jsonify({'logs': f'Error reading log: {str(e)}'})
 
 @app.route('/bot/start')
+@require_auth
 def start_bot():
     bm.start()
     return jsonify(bm.is_running())
 
 
 @app.route('/bot/stop')
+@require_auth
 def stop_bot():
     bm.stop()
     return jsonify(not bm.is_running())
@@ -492,12 +570,12 @@ def stop_bot():
 
 @app.route('/config', methods=['GET'])
 def get_config():
-    return render_template('config.html', data=sync(), config=pre_process_config(), helpfile=help_file)
+    return render_template('config.html', data=sync_cached(), config=pre_process_config(), helpfile=help_file)
 
 
 @app.route('/village', methods=['GET'])
 def get_village_config():
-    data = sync()
+    data = sync_cached()
     vid = request.args.get("id", None)
     return render_template('village.html', data=data, config=pre_process_village_config(village_id=vid),
                            current_select=vid, helpfile=help_file)
@@ -505,7 +583,7 @@ def get_village_config():
 
 @app.route('/map', methods=['GET'])
 def get_map():
-    sync_data = sync()
+    sync_data = sync_cached()
     center_id = request.args.get("center", None)
     center = next(iter(sync_data.get('bot', [])), None) if not center_id else center_id
     map_data = json.dumps(MapBuilder.build(sync_data['villages'], current_village=center, size=15, attacks=sync_data['attacks']))
@@ -514,19 +592,28 @@ def get_map():
 
 @app.route('/villages', methods=['GET'])
 def get_village_overview():
-    return render_template('villages.html', data=sync())
+    return render_template('villages.html', data=sync_cached())
 
 
 @app.route('/building_templates', methods=['GET', 'POST'])
+@require_auth
 def get_building_templates():
     if request.form.get('new', None):
-        plain = os.path.basename(request.form.get('new'))
-        if not plain.endswith('.txt'):
-            plain = "%s.txt" % plain
-        tempfile = '../templates/builder/%s' % plain
-        if not os.path.exists(tempfile):
-            with open(tempfile, 'w') as ouf:
+        raw_name = request.form.get('new', '').strip()
+        # Validate: only safe characters — prevent path traversal
+        if not _SAFE_TEMPLATE_RE.match(raw_name):
+            return jsonify({"error": "Invalid template name: use only letters, digits, _ and -"}), 400
+
+        filename = f"{raw_name}.txt"
+        target_path = os.path.realpath(os.path.join(_TEMPLATES_DIR, filename))
+        # Double-check that the resolved path is still inside the templates dir
+        if not target_path.startswith(_TEMPLATES_DIR + os.sep):
+            return jsonify({"error": "Invalid template path"}), 400
+
+        if not os.path.exists(target_path):
+            with open(target_path, 'w') as ouf:
                 ouf.write("")
+
     selected = request.args.get('t', None)
     return render_template('templates.html',
                            templates=BuildingTemplateManager.template_cache_list(),
@@ -537,7 +624,7 @@ def get_building_templates():
 @app.route('/', methods=['GET'])
 def get_home():
     session = DataReader.get_session()
-    return render_template('bot.html', data=sync(), session=session)
+    return render_template('bot.html', data=sync_cached(), session=session)
 
 
 @app.route('/app/js', methods=['GET'])
@@ -547,6 +634,7 @@ def get_js():
 
 
 @app.route('/app/config/set', methods=['GET'])
+@require_auth
 def config_set():
     vid = request.args.get("village_id", None)
     if not vid:
@@ -557,10 +645,12 @@ def config_set():
             param = param.replace("village.", "")
         DataReader.village_config_set(village_id=vid, parameter=param, value=request.args.get("value", None))
 
+    _invalidate_sync_cache()
     return jsonify(sync())
 
 
 @app.route('/api/clear_reports', methods=['POST'])
+@require_auth
 def clear_reports_endpoint():
     """
     Clears all cached report JSON files and deletes related info.

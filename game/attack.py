@@ -17,44 +17,6 @@ class AttackManager:
     """
     Attackmanager class
     """
-    map = None
-    village_id = None
-    troopmanager = None
-    wrapper = None
-    targets = {}
-    logger = logging.getLogger("Attacks")
-    max_farms = 15
-    template = {}
-    extra_farm = []
-    repman = None
-    target_high_points = False
-    farm_radius = 50
-    farm_minpoints = 0
-    farm_maxpoints = 1000
-    ignored = []
-
-    # Configures the amount of spies used to detect if villages are safe to farm
-    scout_farm_amount = 5
-
-    forced_peace_time = None
-
-    farm_bag_limit_enabled = False
-    farm_bag_block_scouts = True
-    farm_bag_limit_margin = 0.0
-    last_farm_bag_state = None
-    _farm_bag_limit_reached = False
-    _farm_bag_last_log = 0
-
-    # blocks villages which cannot be attacked at the moment (too low points, beginners protection etc..)
-    _unknown_ignored = []
-
-    # Don't mess with these they are in the config file
-    farm_high_prio_wait = 1200
-    farm_default_wait = 3600
-    farm_low_prio_wait = 7200
-
-    smart_farming = False
-    smart_farming_priority = []
 
     def __init__(self, wrapper=None, village_id=None, troopmanager=None, map=None):
         """
@@ -64,6 +26,34 @@ class AttackManager:
         self.village_id = village_id
         self.troopmanager = troopmanager
         self.map = map
+        self.logger = logging.getLogger("Attacks")
+        # Per-instance mutable state
+        self.targets: dict = {}
+        self.ignored: list = []
+        self._unknown_ignored: list = []
+        self.extra_farm: list = []
+        self.smart_farming_priority: list = []
+        # Config / tunables
+        self.max_farms = 15
+        self.template: dict = {}
+        self.repman = None
+        self.target_high_points = False
+        self.farm_radius = 50
+        self.farm_minpoints = 0
+        self.farm_maxpoints = 1000
+        self.scout_farm_amount = 5
+        self.forced_peace_time = None
+        self.farm_bag_limit_enabled = False
+        self.farm_bag_block_scouts = True
+        self.farm_bag_limit_margin = 0.0
+        self.last_farm_bag_state = None
+        self._farm_bag_limit_reached = False
+        self._farm_bag_last_log = 0
+        # Don't mess with these — they are overridden from the config file
+        self.farm_high_prio_wait = 1200
+        self.farm_default_wait = 3600
+        self.farm_low_prio_wait = 7200
+        self.smart_farming = False
 
     def enough_in_village(self, units):
         """

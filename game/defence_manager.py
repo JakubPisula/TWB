@@ -7,50 +7,37 @@ from core.extractors import Extractor
 
 
 class DefenceManager:
-    wrapper = None
-    village_id = None
-    units = None
-    map = None
-
-    under_attack = False
-    auto_evacuate = False
-    attacks = []
-
-    # list of village_id, attack_state
-    my_other_villages = {}
-    allow_support_send = True
-    allow_support_recv = True
-
-    defensive_units = ["spear", "sword", "archer", "marcher", "spy"]
-
-    hide_units = ["snob", "axe"]
-
-    flags = {}
-
-    runs = 0
-    logger = None
-    manage_flags_enabled = True
-    support_factor = 0.25
-    support_max_villages = 2
-
-    # flag_index, flag_level
-    current_flag = []
-
-    _can_change_flag = False
-
-    # increased production
-    set_flag_not_under_attack = 1
-    # increased defence
-    set_flag_under_attack = 4
-
-    _sf_logged = False
-
-    supported = []
 
     def __init__(self, village_id=None, wrapper=None):
         self.village_id = village_id
         self.wrapper = wrapper
         self.logger = logging.getLogger("Defence Manager")
+        # Per-instance mutable state
+        self.attacks: list = []
+        self.my_other_villages: dict = {}
+        self.flags: dict = {}
+        self.current_flag: list = []
+        self.supported: list = []
+        # Fixed-content lists — safe to share but kept per-instance for clarity
+        self.defensive_units: list = ["spear", "sword", "archer", "marcher", "spy"]
+        self.hide_units: list = ["snob", "axe"]
+        # Sub-systems
+        self.units = None
+        self.map = None
+        # Config / tunables
+        self.under_attack = False
+        self.auto_evacuate = False
+        self.allow_support_send = True
+        self.allow_support_recv = True
+        self.runs = 0
+        self.manage_flags_enabled = True
+        self.support_factor = 0.25
+        self.support_max_villages = 2
+        self._can_change_flag = False
+        self._sf_logged = False
+        # Flag type constants
+        self.set_flag_not_under_attack = 1  # increased production
+        self.set_flag_under_attack = 4      # increased defence
 
     def support_other(self, requesting_village):
 

@@ -1,8 +1,8 @@
-import json
 import logging
 import os
 import sys
 
+from core.filemanager import FileManager
 from game.attack import AttackCache
 from game.warehouse_balancer import ResourceCoordinator
 
@@ -11,8 +11,10 @@ class VillageManager:
     @staticmethod
     def farm_manager(verbose=False, clean_reports=False):
         logger = logging.getLogger("FarmManager")
-        with open("config.json", "r") as f:
-            config = json.load(f)
+        config = FileManager.load_json_file("config.json")
+        if not config:
+            logger.error("Could not load config.json")
+            return
 
         if verbose:
             logger.info("Villages: %d", len(config["villages"]))

@@ -97,13 +97,27 @@ class TWB:
         self.should_run = True
         self.runs = 0
         self.found_villages = []
-        # --- PERFORMANCE (POINT 4) ---
-        self.found_villages = []
-        # --- PERFORMANCE (POINT 4) ---
         self.config_data = None
         self.config_mtime = 0
-        # --- END PERFORMANCE ---
         self.web_process = None
+
+    def _compute_and_sleep(self, config: dict) -> None:
+        """Calculate the appropriate sleep interval and block for that duration.
+
+        Uses active/inactive hours from config to decide the base delay, then
+        adds a random jitter of 20–120 seconds to avoid predictable timing.
+        """
+        sleep = 0
+        if self.is_active_hours(config=config):
+            sleep = config["bot"]["active_delay"]
+        elif config["bot"]["inactive_still_active"]:
+            sleep = config["bot"]["inactive_delay"]
+
+        sleep += random.randint(20, 120)
+        dt_next = datetime.datetime.now() + datetime.timedelta(seconds=sleep)
+        print("Dead for %.2f minutes (next run at: %s)" % (sleep / 60, dt_next.time()))
+        sys.stdout.flush()
+        time.sleep(sleep)
 
     @staticmethod
     def internet_online():
@@ -376,20 +390,7 @@ class TWB:
         config = self.config()
         if not self.internet_online():
             print("Internet seems to be down, waiting till its back online...")
-            sleep = 0
-            if self.is_active_hours(config=config):
-                sleep = config["bot"]["active_delay"]
-            else:
-                if config["bot"]["inactive_still_active"]:
-                    sleep = config["bot"]["inactive_delay"]
-
-            sleep += random.randint(20, 120)
-            dtn = datetime.datetime.now()
-            dt_next = dtn + datetime.timedelta(0, sleep)
-            print(
-                "Dead for %.2f minutes (next run at: %s)" % (sleep / 60, dt_next.time())
-            )
-            time.sleep(sleep)
+            self._compute_and_sleep(config)
             return False
 
         self.wrapper = WebWrapper(
@@ -429,20 +430,7 @@ class TWB:
         while self.should_run:
             if not self.internet_online():
                 print("Internet seems to be down, waiting till its back online...")
-                sleep = 0
-                if self.is_active_hours(config=config):
-                    sleep = config["bot"]["active_delay"]
-                else:
-                    if config["bot"]["inactive_still_active"]:
-                        sleep = config["bot"]["inactive_delay"]
-
-                sleep += random.randint(20, 120)
-                dtn = datetime.datetime.now()
-                dt_next = dtn + datetime.timedelta(0, sleep)
-                print(
-                    "Dead for %.2f minutes (next run at: %s)" % (sleep / 60, dt_next.time())
-                )
-                time.sleep(sleep)
+                self._compute_and_sleep(config)
             else:
                 # --- PERFORMANCE (POINT 4) ---
                 # Get cached config
@@ -511,26 +499,10 @@ class TWB:
                         print("Syncing attack states")
                         village.def_man.my_other_villages = defense_states
 
-                sleep = 0
-                if self.is_active_hours(config=config):
-                    sleep = config["bot"]["active_delay"]
-                else:
-                    if config["bot"]["inactive_still_active"]:
-                        sleep = config["bot"]["inactive_delay"]
-
-                sleep += random.randint(20, 120)
-                dtn = datetime.datetime.now()
-                dt_next = dtn + datetime.timedelta(0, sleep)
                 self.runs += 1
-
                 VillageManager.farm_manager(verbose=True)
                 VillageManager.resource_balancer(self.wrapper, config)
-                print(
-                    "Dead for %.2f minutes (next run at: %s)"
-                    % (sleep / 60, dt_next.time())
-                )
-                sys.stdout.flush()
-                time.sleep(sleep)
+                self._compute_and_sleep(config)
 
     def start(self):
         """

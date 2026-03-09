@@ -20,38 +20,36 @@ from core.exceptions import *
 
 
 class Village:
-    village_id = None
-    builder = None
-    units = None
-    wrapper = None
-    resources = {}
-    game_data = {}
-    logger = None
-    force_troops = False
-    area = None
-    snobman = None
-    attack = None
-    resman = None
-    def_man = None
-    rep_man = None
-    config = None
-    forced_peace_today = False
-    village_set_name = None
-    last_attack = None
-    build_config = None
-    current_unit_entry = None
-    forced_peace = False
-    forced_peace_today_start = None
-    disabled_units = []
-    # --- PERFORMANCE (POINT 2) ---
-    overview_html = None
-    # --- END PERFORMANCE ---
-
-    twp = TwStats()
-
     def __init__(self, village_id=None, wrapper=None):
         self.village_id = village_id
         self.wrapper = wrapper
+        # Per-instance state — must NOT be class-level mutable defaults
+        self.resources: dict = {}
+        self.game_data: dict = {}
+        self.disabled_units: list = []
+        self.overview_html = None
+        # Sub-managers — initialised lazily during run()
+        self.builder = None
+        self.units = None
+        self.area = None
+        self.snobman = None
+        self.attack = None
+        self.resman = None
+        self.def_man = None
+        self.rep_man = None
+        # Config / state
+        self.config = None
+        self.build_config = None
+        self.current_unit_entry = None
+        self.logger = None
+        self.force_troops = False
+        self.forced_peace = False
+        self.forced_peace_today = False
+        self.forced_peace_today_start = None
+        self.village_set_name = None
+        self.last_attack = None
+        # TwStats is stateless/shared — safe as class attribute
+        self.twp = TwStats()
 
     def get_config(self, section, parameter, default=None):
         if section not in self.config:

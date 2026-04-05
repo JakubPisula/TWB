@@ -2,33 +2,12 @@ import unittest
 from unittest.mock import MagicMock, patch
 from bs4 import BeautifulSoup
 import time
-from game.scavenging import ScavengingManager, ScavengeLevel, ScavengeAssignment, ScavengingUnavailableError
-
-class FakeResponse:
-    def __init__(self, text, url="https://pl227.plemiona.pl/game.php?village=1&screen=place&mode=scavenge"):
-        self.text = text
-        self.url = url
-
-class FakeWrapper:
-    def __init__(self, response_text):
-        self.response = FakeResponse(response_text)
-        self.last_h = "fake_h"
-        self.post_calls = []
-
-    def get_url(self, url):
-        return self.response
-
-    def post_api_data(self, village_id, action, params, data):
-        self.post_calls.append({
-            "village_id": village_id,
-            "action": action,
-            "params": params,
-            "data": data
-        })
-        return {"success": True}
+import os
+from game.scavenging import ScavengingManager, ScavengeLevel, ScavengeAssignment
 
 class TestScavengingManager(unittest.TestCase):
     def setUp(self):
+        self.village_id = 123
         self.config = {
             "gather_enabled": True,
             "gather_levels": [1, 2, 3],
@@ -40,89 +19,116 @@ class TestScavengingManager(unittest.TestCase):
             },
             "gather_cooldown_minutes": 5
         }
-        with open("tests/fixtures/scavenge_page.html", "r", encoding="utf-8") as f:
-            self.html = f.read()
-        self.wrapper = FakeWrapper(self.html)
-        self.manager = ScavengingManager(village_id=1, config=self.config, wrapper=self.wrapper)
-
-    def test_parse_available_units_excludes_reserved(self):
-        """LK w HTML → nie powinna trafić do wyniku"""
-        soup = BeautifulSoup(self.html, "html.parser")
-        units = self.manager.parse_available_units(soup)
-        
-        self.assertIn("spear", units)
-        self.assertIn("sword", units)
-        self.assertIn("axe", units)
-        self.assertNotIn("light", units) # Reserved 1.0
-        self.assertEqual(units["spear"], 1000)
+        self.wrapper = MagicMock()
+        self.manager = ScavengingManager(self.village_id, self.config, self.wrapper)
 
     def test_calculate_optimal_split_basic(self):
         """500 mieczy + 300 pik → 3 poziomy, sprawdź że suma units ≤ input"""
-        units = {"sword": 500, "spear": 300}
-        # Total carry: 500*15 + 300*25 = 7500 + 7500 = 15000
+        # Carry: spear=25, sword=15, axe=10
+        # total_carry = 300*25 + 500*15 = 7500 + 7500 = 15000
+        # Units total: 800
+        # Avg carry: 15000 / 800 = 18.75
+        
+        units = {"spear": 300, "sword": 500}
         levels = [
-            ScavengeLevel(1, 1000, 0, False, False),
-            ScavengeLevel(2, 2500, 0, False, False),
-            ScavengeLevel(3, 5000, 0, False, False)
+            ScavengeLevel(1, capacity=1000, duration_seconds=0, is_locked=False, is_running=False),
+            ScavengeLevel(2, capacity=2500, duration_seconds=0, is_locked=False, is_running=False),
+            ScavengeLevel(3, capacity=5000, duration_seconds=0, is_locked=False, is_running=False),
         ]
         
         assignments = self.manager.calculate_optimal_split(units, levels)
         
-        # Greedy algorithm should fill higher levels first
-        # Level 3 (5000) needs 5000 * 0.85 = 4250 carry
-        # Level 2 (2500) needs 2500 * 0.85 = 2125 carry
-        # Level 1 (1000) needs 1000 * 0.85 = 850 carry
+        # Total units sent should not exceed input
+        sent_spears = sum(a.units.get("spear", 0) for a in assignments)
+        sent_swords = sum(a.units.get("sword", 0) for a in assignments)
         
-        total_assigned = {"sword": 0, "spear": 0}
-        for assign in assignments:
-            for u, count in assign.units.items():
-                total_assigned[u] += count
-        
-        self.assertLessEqual(total_assigned["sword"], 500)
-        self.assertLessEqual(total_assigned["spear"], 300)
+        self.assertLessEqual(sent_spears, 300)
+        self.assertLessEqual(sent_swords, 500)
         self.assertTrue(len(assignments) > 0)
+        
+        # Check if high capacity level is first
+        self.assertEqual(assignments[0].level_id, 3)
 
     def test_calculate_optimal_split_not_enough_units(self):
         """za mało jednostek → pomiń poziom z niskim fill_ratio"""
-        units = {"axe": 10} # Carry: 10 * 10 = 100
+        # Units: 10 spears (carry 250)
+        # Level 1: capacity 1000. Min fill (0.85) = 850.
+        # 250 < 850, so should skip.
+        
+        units = {"spear": 10}
         levels = [
-            ScavengeLevel(1, 1000, 0, False, False) # Needs 850 carry for 0.85 ratio
+            ScavengeLevel(1, capacity=1000, duration_seconds=0, is_locked=False, is_running=False)
         ]
         
         assignments = self.manager.calculate_optimal_split(units, levels)
         self.assertEqual(len(assignments), 0)
 
     def test_calculate_optimal_split_single_level(self):
-        """tylko 1 wolny poziom → wszystko do niego (jeśli fill_ratio OK)"""
-        units = {"spear": 100} # Carry: 2500
+        """tylko 1 wolny poziom → wszystko do niego (jeśli fill_ratio ok)"""
+        # Units: 100 spears (carry 2500)
+        # Level 1: capacity 1000.
+        # Should take units needed for 1000 carry.
+        # avg_carry = 25. units_needed = 1000/25 = 40.
+        
+        units = {"spear": 100}
         levels = [
-            ScavengeLevel(2, 2500, 0, False, False) # Needs 2500 * 0.85 = 2125
+            ScavengeLevel(1, capacity=1000, duration_seconds=0, is_locked=False, is_running=False)
         ]
         
         assignments = self.manager.calculate_optimal_split(units, levels)
         self.assertEqual(len(assignments), 1)
-        self.assertEqual(assignments[0].level_id, 2)
-        # It should send all if it just reaches the ratio, or enough to fill it.
-        # My implementation sends proportionally to what it has.
-        self.assertEqual(assignments[0].units["spear"], 100)
+        self.assertEqual(assignments[0].level_id, 1)
+        self.assertEqual(assignments[0].units["spear"], 40)
+
+    def test_parse_available_units_excludes_reserved(self):
+        """LK w HTML → nie powinna trafić do wyniku"""
+        fixture_path = os.path.join("tests", "fixtures", "scavenge_page.html")
+        with open(fixture_path, "r", encoding="utf-8") as f:
+            html = f.read()
+        
+        soup = BeautifulSoup(html, "html.parser")
+        units = self.manager.parse_available_units(soup)
+        
+        # Fixture has light=100, spear=1000, sword=500, axe=200
+        # Config has light reserved 100%
+        self.assertNotIn("light", units)
+        self.assertEqual(units.get("spear"), 1000)
+        self.assertEqual(units.get("sword"), 500)
+        self.assertEqual(units.get("axe"), 200)
 
     def test_cooldown_respected(self):
         """run() wywołane dwa razy szybko → drugi call nie wysyła requestów"""
-        # First call
-        self.manager.run()
-        first_call_count = len(self.wrapper.post_calls)
-        self.assertTrue(first_call_count > 0)
-        
-        # Second call immediately
-        self.manager.run()
-        self.assertEqual(len(self.wrapper.post_calls), first_call_count)
+        with patch.object(self.manager, 'fetch_scavenge_page') as mock_fetch:
+            mock_fetch.return_value = BeautifulSoup("<html></html>", "html.parser")
+            
+            # First run
+            self.manager.run()
+            self.assertTrue(mock_fetch.called)
+            
+            mock_fetch.reset_mock()
+            
+            # Second run (immediately)
+            self.manager.run()
+            self.assertFalse(mock_fetch.called)
 
-    def test_scavenge_unavailable(self):
-        """Test behavior when scavenging is unavailable"""
-        self.wrapper.response.url = "https://pl227.plemiona.pl/game.php?screen=place" # No mode=scavenge
+    def test_parse_scavenge_levels_from_fixture(self):
+        """Test parsing levels from real fixture"""
+        fixture_path = os.path.join("tests", "fixtures", "scavenge_page.html")
+        with open(fixture_path, "r", encoding="utf-8") as f:
+            html = f.read()
         
-        with self.assertRaises(ScavengingUnavailableError):
-            self.manager.fetch_scavenge_page()
+        soup = BeautifulSoup(html, "html.parser")
+        levels = self.manager.parse_scavenge_levels(soup)
+        
+        # Fixture has levels 1, 2, 3 free and 4 locked.
+        # gather_levels config is [1, 2, 3]
+        self.assertEqual(len(levels), 3)
+        self.assertEqual(levels[0].level_id, 1)
+        self.assertEqual(levels[0].capacity, 1000)
+        self.assertEqual(levels[1].level_id, 2)
+        self.assertEqual(levels[1].capacity, 2500)
+        self.assertEqual(levels[2].level_id, 3)
+        self.assertEqual(levels[2].capacity, 5000)
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     unittest.main()

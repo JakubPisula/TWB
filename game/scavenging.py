@@ -1,9 +1,10 @@
 import logging
 import time
 import random
+import re
 from math import ceil
-from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Any
+from dataclasses import dataclass
+from typing import Dict, List, Optional
 from bs4 import BeautifulSoup
 
 @dataclass
@@ -49,76 +50,78 @@ class ScavengingManager:
         """
         Initialize ScavengingManager.
         
-        :param village_id: ID wioski (int)
+        :param village_id: ID wioski (int) z config["villages"]
         :param config: słownik village_template z config.json
-        :param wrapper: instancja WebWrapper z core/request.py
+        :param wrapper: instancja istniejącego HTTP wrappera z core/
         """
         self.village_id = village_id
         self.config = config
         self.wrapper = wrapper
-        self.logger = logging.getLogger(f"Scavenging:{village_id}")
+        self.logger = logging.getLogger(__name__)
         self.last_run = 0
 
     def fetch_scavenge_page(self) -> BeautifulSoup:
         """
         Pobiera stronę: https://{server}/game.php?village={village_id}&screen=place&mode=scavenge
+        Używa wrapper.get(url) - w tym przypadku get_url z WebWrapper
+        Parsuje HTML przez BeautifulSoup(response.text, "html.parser")
         Rzuca ScavengingUnavailableError jeśli zakładka jest niedostępna
         """
         url = f"game.php?village={self.village_id}&screen=place&mode=scavenge"
         response = self.wrapper.get_url(url)
-        if not response or "mode=scavenge" not in response.url:
-            raise ScavengingUnavailableError("Scavenging mode not available or redirect occurred")
+        if not response or response.status_code != 200 or "screen=place" not in response.url:
+            raise ScavengingUnavailableError(f"Scavenge page not available for village {self.village_id}")
         
         soup = BeautifulSoup(response.text, "html.parser")
-        # Check if scavenging is actually there
+        # Check if the scavenge options are present
         if not soup.select_one(".scavenge-option"):
-            raise ScavengingUnavailableError("No scavenge options found on page")
+            raise ScavengingUnavailableError(f"Scavenging not unlocked or not available in village {self.village_id}")
             
         return soup
 
     def parse_available_units(self, soup: BeautifulSoup) -> Dict[str, int]:
         """
         Wyciąga aktualnie dostępne (nie w drodze) jednostki wioski ze strony zbieractwa
-        Pomija jednostki z gather_reserve_for_farm (default 100% dla LK, marcher)
+        Format zwracany: {"sword": 450, "spear": 300, "axe": 200, ...}
+        Pomija jednostki z gather_reserve_for_farm (LK, marcher — 100% zarezerwowane)
         Pomija jednostki nieobecne w gather_unit_priority
         """
         units = {}
         priority_units = self.config.get("gather_unit_priority", ["sword", "spear", "axe"])
         reserve_cfg = self.config.get("gather_reserve_for_farm", {"light": 1.0, "marcher": 1.0})
 
-        # Units are usually in a container with class "units-entry-all" or similar
-        # But Tribal Wars often has them in a script or specific spans
-        unit_containers = soup.select(".units-entry-all")
-        for container in unit_containers:
-            unit_name = container.get("data-unit")
+        # Units are usually in spans with class "units-entry-all" and data-unit attribute
+        unit_elements = soup.select(".units-entry-all")
+        for el in unit_elements:
+            unit_name = el.get("data-unit")
             if not unit_name:
                 continue
             
-            count_text = container.text.strip("() ")
+            if unit_name not in priority_units:
+                continue
+
             try:
+                # Text is usually "(123)"
+                count_text = el.text.strip("() ")
                 count = int(count_text)
-            except ValueError:
-                count = 0
-            
+            except (ValueError, TypeError):
+                continue
+
             if count <= 0:
                 continue
 
-            # Check priority and reserves
-            if unit_name not in priority_units:
-                continue
-            
             reserve_ratio = reserve_cfg.get(unit_name, 0.0)
-            available_after_reserve = floor_count = int(count * (1.0 - reserve_ratio))
+            available = int(count * (1.0 - reserve_ratio))
             
-            if available_after_reserve > 0:
-                units[unit_name] = available_after_reserve
+            if available > 0:
+                units[unit_name] = available
 
-        self.logger.debug(f"Available units for scavenging: {units}")
         return units
 
     def parse_scavenge_levels(self, soup: BeautifulSoup) -> List[ScavengeLevel]:
         """
         Wyciąga dostępne poziomy zbieractwa z HTML
+        Zwraca listę ScavengeLevel(level_id, capacity, duration_seconds, is_locked, is_running)
         Filtruje do poziomów z gather_levels (domyślnie [1,2,3])
         Pomija poziomy, które już trwają (is_running=True)
         """
@@ -127,61 +130,53 @@ class ScavengingManager:
         
         options = soup.select(".scavenge-option")
         for opt in options:
-            try:
-                # Identification of level
-                # Usually there's a button or a hidden input with option_id
-                btn = opt.select_one(".free_send_button")
-                if not btn:
-                    # Maybe it's locked or running
-                    # Check for lock icon or timer
-                    is_locked = bool(opt.select_one(".lock"))
-                    is_running = bool(opt.select_one(".timer"))
-                    
-                    # If it's running, we can still get the ID from data-option-id if present
-                    # or from the order of elements
-                    level_id_match = re.search(r'ScavengeWidgets\.sendSquads\((\d+)', opt.decode_contents())
-                    if level_id_match:
-                        level_id = int(level_id_match.group(1))
-                    else:
-                        # Fallback to a less reliable way if needed, but usually Tribal Wars 
-                        # has structured data here
-                        continue
-                else:
-                    level_id = int(btn.get("data-option-id", 0))
-                    is_locked = False
-                    is_running = False
+            # Level ID is usually in a data-id or similar, or extracted from button
+            # But more reliably from the "data-option-id" of the button if available
+            btn = opt.select_one(".free_send_button")
+            
+            # If button is missing, it might be running or locked
+            is_running = bool(opt.select_one(".timer"))
+            is_locked = bool(opt.select_one(".lock"))
+            
+            # Try to get level_id from data-option-id if button exists, or from script/text
+            level_id = None
+            if btn:
+                level_id = int(btn.get("data-option-id"))
+            else:
+                # If running, the level ID might be in some other attribute
+                # Let's try to find it in the opt class or sibling
+                # Usually it's in the structure of the options
+                # Fallback: parse from text if possible or use order
+                pass
+            
+            # If still None, we might need a regex on the option content
+            if level_id is None:
+                match = re.search(r'ScavengeWidgets\.sendSquads\((\d+)', opt.decode_contents())
+                if match:
+                    level_id = int(match.group(1))
 
-                if level_id not in enabled_levels:
-                    continue
-                
-                if is_locked or is_running:
-                    continue
-
-                # Capacity and duration are often in the description or data attributes
-                # If not easily available, we might need to parse them from the text
-                # "Zdolność łupu: 1000" etc.
-                capacity = 0
-                cap_el = opt.select_one(".status-specific")
-                if cap_el:
-                    cap_text = cap_el.text
-                    cap_match = re.search(r'(\d+)', cap_text.replace(".", ""))
-                    if cap_match:
-                        capacity = int(cap_match.group(1))
-
-                # Duration is harder to get without units selected, but sometimes it's there
-                duration = 0 # Not strictly needed for the greedy split algorithm if we use capacity
-
-                levels.append(ScavengeLevel(
-                    level_id=level_id,
-                    capacity=capacity,
-                    duration_seconds=duration,
-                    is_locked=is_locked,
-                    is_running=is_running
-                ))
-            except Exception as e:
-                self.logger.warning(f"Error parsing scavenge option: {e}")
+            if level_id is None or level_id not in enabled_levels:
                 continue
-                
+            
+            if is_running or is_locked:
+                continue
+
+            # Capacity: "Zdolność łupu: 1.234"
+            capacity = 0
+            cap_el = opt.select_one(".status-specific")
+            if cap_el:
+                cap_match = re.search(r'(\d+)', cap_el.text.replace(".", ""))
+                if cap_match:
+                    capacity = int(cap_match.group(1))
+
+            levels.append(ScavengeLevel(
+                level_id=level_id,
+                capacity=capacity,
+                duration_seconds=0, # Not used in greedy split
+                is_locked=is_locked,
+                is_running=is_running
+            ))
+            
         return levels
 
     def calculate_optimal_split(self, units: Dict[str, int], levels: List[ScavengeLevel]) -> List[ScavengeAssignment]:
@@ -190,15 +185,19 @@ class ScavengingManager:
         1. Policz łączną nośność dostępnych jednostek.
         2. Posortuj poziomy malejąco po capacity.
         3. Przydziel jednostki zachłannie.
+        4. Wypełnij do gather_min_fill_ratio * capacity.
         """
         if not units or not levels:
             return []
 
         total_carry = sum(count * self.UNIT_CARRY.get(u, 0) for u, count in units.items())
-        if total_carry == 0:
+        total_units = sum(units.values())
+        if total_units == 0:
             return []
+        
+        avg_carry_per_unit = total_carry / total_units
 
-        # Sort levels descending by capacity (higher levels first)
+        # Sort levels descending by capacity
         sorted_levels = sorted(levels, key=lambda x: x.capacity, reverse=True)
         
         min_fill_ratio = self.config.get("gather_min_fill_ratio", 0.85)
@@ -206,52 +205,60 @@ class ScavengingManager:
         
         remaining_units = {k: v for k, v in units.items()}
         
-        # We want to fill levels to their capacity if possible, 
-        # but also distribute what we have.
-        # If we have one level, we send everything there (if >= min_fill_ratio).
-        # If we have multiple, we fill the highest one first.
-
         for level in sorted_levels:
-            current_remaining_carry = sum(count * self.UNIT_CARRY.get(u, 0) for u, count in remaining_units.items())
-            if current_remaining_carry == 0:
+            current_total_units = sum(remaining_units.values())
+            if current_total_units == 0:
                 break
                 
-            if current_remaining_carry < level.capacity * min_fill_ratio:
-                # This level cannot be filled to minimum, skip it
+            current_total_carry = sum(count * self.UNIT_CARRY.get(u, 0) for u, count in remaining_units.items())
+            
+            # Required carry for this level to meet min_fill_ratio
+            required_carry = level.capacity * min_fill_ratio
+            
+            if current_total_carry < required_carry:
                 continue
+                
+            # How many units needed to reach 100% capacity (ideally)
+            # or as much as we have if it's > min_fill_ratio
+            units_needed = ceil(level.capacity / avg_carry_per_unit)
             
-            # How many units to send to fill this level up to its capacity?
-            # If we have more than enough, we take only what's needed for 100% capacity.
-            # If we have less than 100% but more than min_fill_ratio%, we take all.
+            # If we don't have enough units to fill 100%, we take all we have
+            # (since we already checked it's at least min_fill_ratio)
+            to_take_total = min(units_needed, current_total_units)
             
-            target_carry = level.capacity
-            if current_remaining_carry <= target_carry:
-                # Take all remaining
-                assignments.append(ScavengeAssignment(level_id=level.level_id, units={k: v for k, v in remaining_units.items() if v > 0}))
-                for k in remaining_units: remaining_units[k] = 0
-            else:
-                # Take proportional amount to reach 100% capacity
-                ratio = target_carry / current_remaining_carry
-                level_units = {}
-                for u, count in remaining_units.items():
-                    to_send = int(count * ratio)
-                    if to_send > 0:
-                        level_units[u] = to_send
-                        remaining_units[u] -= to_send
-                if level_units:
-                    assignments.append(ScavengeAssignment(level_id=level.level_id, units=level_units))
+            # Distribute taking units proportionally from what's left
+            level_units = {}
+            ratio = to_take_total / current_total_units
+            
+            taken_so_far = 0
+            for u, count in remaining_units.items():
+                take = int(count * ratio)
+                if take > 0:
+                    level_units[u] = take
+                    remaining_units[u] -= take
+                    taken_so_far += take
+            
+            # Correction for rounding
+            if taken_so_far < to_take_total:
+                diff = to_take_total - taken_so_far
+                for u in remaining_units:
+                    if remaining_units[u] >= diff:
+                        level_units[u] = level_units.get(u, 0) + diff
+                        remaining_units[u] -= diff
+                        break
+            
+            if level_units:
+                assignments.append(ScavengeAssignment(level_id=level.level_id, units=level_units))
 
         return assignments
 
     def send_scavenge(self, assignment: ScavengeAssignment) -> bool:
         """
-        Wysyła POST do gry dla danego poziomu zbieractwa.
+        Wysyła POST do gry dla danego poziomu zbieractwa
         """
-        # Tribal Wars uses a specific API for sending squads
-        # Payload: {"squad_requests[0][village_id]": ..., "squad_requests[0][option_id]": ..., ...}
-        
+        # Payload format for scavenge
         payload = {
-            "squad_requests[0][village_id]": self.village_id,
+            "squad_requests[0][village_id]": str(self.village_id),
             "squad_requests[0][option_id]": str(assignment.level_id),
             "squad_requests[0][use_premium]": "false",
             "h": self.wrapper.last_h
@@ -261,28 +268,28 @@ class ScavengingManager:
         for unit, count in assignment.units.items():
             payload[f"squad_requests[0][candidate_squad][unit_counts][{unit}]"] = str(count)
             total_carry += count * self.UNIT_CARRY.get(unit, 0)
-            
+        
         payload["squad_requests[0][candidate_squad][carry_max]"] = str(total_carry)
+
+        self.logger.info(f"Sending scavenge for village {self.village_id}, level {assignment.level_id}")
         
-        self.logger.info(f"Sending scavenging level {assignment.level_id} with units: {assignment.units}")
-        
-        # Use post_api_data or post_url? GatherMixin uses get_api_action (which is a POST)
-        result = self.wrapper.post_api_data(
+        # Action is usually "send_squads" on screen "scavenge_api"
+        res = self.wrapper.post_api_data(
             village_id=self.village_id,
             action="send_squads",
             params={"screen": "scavenge_api"},
             data=payload
         )
         
-        if result and (result == True or (isinstance(result, dict) and result.get("success"))):
+        if res and (res == True or (isinstance(res, dict) and res.get("success"))):
             return True
-        
-        self.logger.error(f"Failed to send scavenging for level {assignment.level_id}: {result}")
+            
+        self.logger.error(f"Failed to send scavenge for village {self.village_id}: {res}")
         return False
 
     def run(self) -> None:
         """
-        Główna pętla wywoływana przez schedulera bota.
+        Główna pętla wywoływana przez schedulera bota
         """
         if not self.config.get("gather_enabled", False):
             return
@@ -297,24 +304,19 @@ class ScavengingManager:
             soup = self.fetch_scavenge_page()
             units = self.parse_available_units(soup)
             if not units:
-                self.logger.debug("No units available for scavenging")
                 return
 
             levels = self.parse_scavenge_levels(soup)
             if not levels:
-                self.logger.debug("No scavenging levels available")
                 return
 
             assignments = self.calculate_optimal_split(units, levels)
             for assign in assignments:
-                success = self.send_scavenge(assign)
-                if success:
-                    # Small delay between sending different levels
+                if self.send_scavenge(assign):
+                    # Sleep a bit between levels
                     time.sleep(random.uniform(1.0, 3.0))
-                
+                    
         except ScavengingUnavailableError as e:
-            self.logger.warning(f"Scavenging unavailable: {e}")
+            self.logger.warning(f"Scavenging unavailable for village {self.village_id}: {e}")
         except Exception as e:
-            self.logger.exception(f"Unexpected error in ScavengingManager: {e}")
-
-import re
+            self.logger.exception(f"Error in ScavengingManager for village {self.village_id}: {e}")

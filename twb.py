@@ -421,8 +421,23 @@ class TWB:
             
         self.wrapper.headers["user-agent"] = config["bot"]["user_agent"]
         self.wrapper.start()
+
+        # Initialize world data and refresh
+        wdm = WorldDataManager(config["server"]["server"])
+        try:
+            wdm.refresh_all(sync_db=False) # Skip DB sync for now to be fast
+        except Exception as e:
+            logging.getLogger("TWB").warning(f"Failed to refresh world data: {e}")
+
         for vid in config["villages"]:
             v = Village(wrapper=self.wrapper, village_id=vid)
+            village_config = config["villages"][vid]
+            if village_config.get("gather_enabled", False):
+                v.scavenging = ScavengingManager(
+                    village_id=int(vid),
+                    config=village_config,
+                    wrapper=self.wrapper
+                )
             self.villages.append(copy.deepcopy(v))
         # setup additional builder
         rm = None

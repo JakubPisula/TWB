@@ -3,9 +3,14 @@ import time
 import logging
 import requests
 import pandas as pd
+from datetime import datetime
 from urllib.parse import unquote
 from typing import Dict, List, Optional, Any
-from core.database import DatabaseManager
+
+try:
+    from core.database import DatabaseManager
+except ImportError:
+    DatabaseManager = None
 
 class WorldDataFetchError(Exception):
     """Exception raised when fetching world data fails."""
@@ -216,7 +221,6 @@ class WorldDataManager:
         except Exception as e:
             self.logger.error(f"Error during world data DB sync: {e}")
 
-from datetime import datetime
 
 if __name__ == "__main__":
     # Test standalone

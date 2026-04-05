@@ -196,102 +196,74 @@ class ReportManager:
         to_player = None
 
         extra = {}
-
         losses = {}
 
+        # 1. Parse timestamp
         attacked = re.search(r'(\d{2}\.\d{2}\.\d{2} \d{2}:\d{2}:\d{2})<span class=\"small grey\">', report)
         if attacked:
-            extra["when"] = int(datetime.strptime(attacked.group(1), "%d.%m.%y %H:%M:%S").timestamp())
+            try:
+                extra["when"] = int(datetime.strptime(attacked.group(1), "%d.%m.%y %H:%M:%S").timestamp())
+            except (ValueError, IndexError):
+                self.logger.warning("Failed to parse timestamp in report %s", report_id)
+                extra["when"] = int(datetime.now().timestamp())
 
-        attacker = re.search(r'(?s)(<table id="attack_info_att".+?Agresor:.*?)<table id="attack_info_att_units"', report)
+        # 2. Parse attacker info
+        attacker = re.search(r'(?s)<table id="attack_info_att".+?Agresor:.*?data-id="(\d+)"(?:.*?data-player="(\d+)")?', report)
         if attacker:
-            from_village_match = re.search(r'data-id="(\d+)"', attacker.group(1))
-            if from_village_match:
-                from_village = from_village_match.group(1)
-                from_player_match = re.search(r'data-player="(\d+)"', attacker.group(1))
-                from_player = from_player_match.group(1) if from_player_match else "0"
-                
-                # Fetch only the inner units table
-                units = re.search(
-                    r'(?s)<table id="attack_info_att_units"(.+?)</table>',
-                    report,
-                )
-                if units:
-                    sent_units = re.findall(r"(?s)<tr[^>]*>(.+?)</tr>", units.group(1))
-                    if len(sent_units) >= 2:
-                        extra["units_sent"] = self.re_unit(
-                            Extractor.units_in_total(sent_units[1])
-                        )
-                    if len(sent_units) == 3:
-                        extra["units_losses"] = self.re_unit(
-                            Extractor.units_in_total(sent_units[2])
-                        )
-                        # Remove the from_player check or at least populate losses properly
-                        if not self.game_state or str(from_player) == str(self.game_state.get("player", {}).get("id")) or "units_losses" in extra:
-                            losses = extra["units_losses"]
+            from_village = attacker.group(1)
+            from_player = attacker.group(2) if attacker.group(2) else "0"
+            
+            units_match = re.search(r'(?s)<table id="attack_info_att_units"(.+?)</table>', report)
+            if units_match:
+                sent_units = re.findall(r"(?s)<tr[^>]*>(.+?)</tr>", units_match.group(1))
+                if len(sent_units) >= 2:
+                    extra["units_sent"] = self.re_unit(Extractor.units_in_total(sent_units[1]))
+                if len(sent_units) == 3:
+                    extra["units_losses"] = self.re_unit(Extractor.units_in_total(sent_units[2]))
+                    losses = extra.get("units_losses", {})
 
-        defender = re.search(r'(?s)(<table id="attack_info_def".+?Obro.*?)<table id="attack_info_def_units"', report)
+        # 3. Parse defender info
+        defender = re.search(r'(?s)<table id="attack_info_def".+?Obro.*?data-id="(\d+)"(?:.*?data-player="(\d+)")?', report)
         if defender:
-            to_village_match = re.search(r'data-id="(\d+)"', defender.group(1))
-            if to_village_match:
-                to_village = to_village_match.group(1)
-                to_player_match = re.search(r'data-player="(\d+)"', defender.group(1))
-                to_player = to_player_match.group(1) if to_player_match else "0"
-                
-                # Fetch only the inner units table
-                units = re.search(
-                    r'(?s)<table id="attack_info_def_units"(.+?)</table>',
-                    report,
-                )
-                if units:
-                    def_units = re.findall(r"(?s)<tr[^>]*>(.+?)</tr>", units.group(1))
-                    if len(def_units) >= 2:
-                        extra["defence_units"] = self.re_unit(
-                            Extractor.units_in_total(def_units[1])
-                        )
-                    if len(def_units) == 3:
-                        extra["defence_losses"] = self.re_unit(
-                            Extractor.units_in_total(def_units[2])
-                        )
-                        if self.game_state and "player" in self.game_state and str(to_player) == str(self.game_state["player"]["id"]):
-                            losses = extra["defence_losses"]
-        results = re.search(r'(?s)(<table id="attack_results".+?</table>)', report)
-        report = report.replace('<span class="grey">.</span>', "")
+            to_village = defender.group(1)
+            to_player = defender.group(2) if defender.group(2) else "0"
+            
+            def_units_match = re.search(r'(?s)<table id="attack_info_def_units"(.+?)</table>', report)
+            if def_units_match:
+                def_rows = re.findall(r"(?s)<tr[^>]*>(.+?)</tr>", def_units_match.group(1))
+                if len(def_rows) >= 2:
+                    extra["defence_units"] = self.re_unit(Extractor.units_in_total(def_rows[1]))
+                if len(def_rows) == 3:
+                    extra["defence_losses"] = self.re_unit(Extractor.units_in_total(def_rows[2]))
+
+        # 4. Parse loot results
+        results = re.search(r'(?s)<table id="attack_results".+?</table>', report)
         if results:
             loot = {}
-            for loot_entry in re.findall(
-                    r'<span class="icon header (wood|stone|iron)".+?</span>([\d\.,\s&nbsp;]+)', report
-            ):
+            for loot_entry in re.findall(r'<span class="icon header (wood|stone|iron)".+?</span>([\d\.,\s&nbsp;]+)', report):
                 amount = re.sub(r'[^\d]', '', loot_entry[1])
-                loot[loot_entry[0]] = amount
+                if amount:
+                    loot[loot_entry[0]] = amount
             extra["loot"] = loot
-            self.logger.info("attack report %s -> %s", from_village, to_village)
+            self.logger.info("Processed loot for %s -> %s", from_village, to_village)
 
-        scout_results = re.search(
-            r'(?s)(<table id="attack_spy_resources".+?</table>)', report
-        )
+        # 5. Parse scout results (buildings & resources)
+        scout_results = re.search(r'(?s)<table id="attack_spy_resources".+?</table>', report)
         if scout_results:
-            self.logger.info("scout report %s -> %s", from_village, to_village)
-            scout_buildings = re.search(
-                r'(?s)<input id="attack_spy_building_data" type="hidden" value="(.+?)"',
-                report,
-            )
+            scout_buildings = re.search(r'(?s)<input id="attack_spy_building_data" type="hidden" value="(.+?)"', report)
             if scout_buildings:
-                raw = scout_buildings.group(1).replace("&quot;", '"')
-                extra["buildings"] = self.re_building(json.loads(raw))
+                try:
+                    raw = scout_buildings.group(1).replace("&quot;", '"')
+                    extra["buildings"] = self.re_building(json.loads(raw))
+                except (json.JSONDecodeError, ValueError):
+                    self.logger.debug("Failed to parse building data in scout report")
+
             found_res = {}
-            for loot_entry in re.findall(
-                    r'<span class="icon header (wood|stone|iron)".+?</span>([\d\.,\s&nbsp;]+)', scout_results.group(1)
-            ):
-                amount = re.sub(r'[^\d]', '', loot_entry[1])
-                found_res[loot_entry[0]] = amount
+            for res_entry in re.findall(r'<span class="icon header (wood|stone|iron)".+?</span>([\d\.,\s&nbsp;]+)', scout_results.group(1)):
+                amount = re.sub(r'[^\d]', '', res_entry[1])
+                if amount:
+                    found_res[res_entry[0]] = amount
             extra["resources"] = found_res
-            units_away = re.search(
-                r'(?s)(<table id="attack_spy_away".+?</table>)', report
-            )
-            if units_away:
-                data_away = self.re_unit(Extractor.units_in_total(units_away.group(1)))
-                extra["units_away"] = data_away
 
         attack_type = "scout" if scout_results and not results else "attack"
 

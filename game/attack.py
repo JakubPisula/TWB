@@ -95,38 +95,46 @@ class AttackManager:
                     "Farm bag limit cleared after refreshing place screen"
                 )
         self.get_targets()
-        ignored = []
+        
+        processed_targets = set()
         # Statistics for the current run
         stats = {"sent": 0, "skipped_reservation": 0, "total_targets": 0}
         
-        targets = self.targets[0: self.max_farms]
-        stats["total_targets"] = len(targets)
+        targets_to_process = self.targets[0: self.max_farms]
+        stats["total_targets"] = len(targets_to_process)
         
         # Limits the amount of villages that are farmed from the current village
-        for target in targets:
+        for target_data in targets_to_process:
+            target, distance = target_data
+            target_id = target["id"]
+            
+            if target_id in processed_targets:
+                continue
+            processed_targets.add(target_id)
+
             if type(self.template) == list:
                 f = False
-                for template in self.template:
-                    if template in ignored:
-                        continue
-                    out_res = self.send_farm(target, template)
+                for t_entry in self.template:
+                    out_res = self.send_farm(target_data, t_entry)
                     if out_res == 1:
                         f = True
                         stats["sent"] += 1
                         break
                     elif out_res == -1:
-                        ignored.append(template)
+                        self.logger.info("Stopping farming run for village %s: no more units available.", self.village_id)
+                        return True
                     elif out_res == 0: # Reservation failed or other skip
                         stats["skipped_reservation"] += 1
                 if not f:
                     continue
             else:
-                out_res = self.send_farm(target, self.template)
+                out_res = self.send_farm(target_data, self.template)
                 if out_res == 1:
                     stats["sent"] += 1
                 elif out_res == 0:
                     stats["skipped_reservation"] += 1
                 elif out_res == -1:
+                    self.logger.info("Stopping farming run for village %s: no more units available.", self.village_id)
                     break
 
         # Advanced Logging: Overstacking detection
@@ -236,143 +244,101 @@ class AttackManager:
 
         return smart_troops
 
-    def send_farm(self, target, template):
+    def send_farm(self, target_data, template, cache_entry=None):
         """
         Send a farming run
         """
-        target, _ = target
+        target, distance = target_data
+        target_id = target["id"]
+        
         if self.farm_bag_limit_enabled and self._farm_bag_limit_reached:
-            self.logger.debug("Skipping farm target because farm bag limit was reached earlier")
             return 0
 
-        cache_entry = AttackCache.get_cache(target["id"])
+        # Use passed cache_entry if available, otherwise fetch
+        if not cache_entry:
+            cache_entry = AttackCache.get_cache(target_id)
         
+        # --- STALE CACHE CHECK (TTL 12h) ---
+        if cache_entry and cache_entry.get("last_attack"):
+            age_h = (time.time() - cache_entry["last_attack"]) / 3600
+            if age_h > 12:
+                self.logger.debug("Farm data for %s is stale (%.1fh), re-scouting recommended", target_id, age_h)
+                # can_attack will trigger scouting if needed
+
         send_template = template.copy()
         
         requires_strict = False
         was_lost = False
         last_sent = None
         
-        try:
-            from core.database import DatabaseManager
-            history = DatabaseManager.get_attack_history(target["id"], limit=1)
-            if history and len(history) > 0:
-                last_attack = history[0]
-                for loss in last_attack.get("losses", []):
-                    if loss.get("side") == "attacker" and loss.get("amount", 0) > 0:
-                        was_lost = True
-                        break
-                if was_lost:
-                    last_sent = last_attack.get("troops_sent")
-                    if isinstance(last_sent, str):
-                        import json
-                        try:
-                            last_sent = json.loads(last_sent)
-                        except Exception:
-                            last_sent = None
-        except ImportError:
-            pass
-            
-        if not was_lost and cache_entry and cache_entry.get("was_lost") and cache_entry.get("last_sent"):
+        # Check history for losses via AttackCache instead of slow DB query here
+        if cache_entry and cache_entry.get("was_lost"):
             was_lost = True
             last_sent = cache_entry.get("last_sent")
 
         if was_lost and last_sent:
-            scaled_template = {}
-            for unit, count in last_sent.items():
-                scaled_template[unit] = int(count) + int(template.get(unit, 1))
-                
-            for unit, count in template.items():
-                if unit not in scaled_template:
-                    scaled_template[unit] = int(count)
-                    
-            self.logger.info(
-                "Previous attack to %s suffered losses. Scaling troops: %s -> %s",
-                target["id"], last_sent, scaled_template
-            )
+            scaled_template = {u: int(c) + int(template.get(u, 1)) for u, c in last_sent.items()}
+            for u, c in template.items():
+                if u not in scaled_template:
+                    scaled_template[u] = int(c)
             send_template = scaled_template
             requires_strict = True
 
-        # --- ATOMIC RESERVATION OPTIMIZATION ---
-        # Calculate target capacity for reservation
+        # --- ATOMIC RESERVATION ---
         target_capacity = sum(self.troopmanager.carry_capacity.get(u, 0) * int(c) for u, c in send_template.items())
-        # Request roughly equal split of resources for the capacity
         req_res = target_capacity // 3
         
         success, res_w, res_s, res_i = DatabaseManager.reserve_farm_loot(
-            target["id"], req_w=req_res, req_s=req_res, req_i=req_res, 
+            target_id, req_w=req_res, req_s=req_res, req_i=req_res, 
             min_threshold=self.min_farm_capacity
         )
         
         if not success:
-            self.logger.debug("Skipping %s: Atomic reservation failed (not enough predicted loot)", target["id"])
+            self.logger.debug("Skipping %s: Predicted loot too low", target_id)
             return 0
             
         total_reserved = res_w + res_s + res_i
         
         smart_template = None
         if self.smart_farming:
-            # Use reserved resources as a target if it's lower than what template would fetch
             max_loot_target = total_reserved if total_reserved > 0 else 999999
             smart_template = self.get_smart_troops(send_template, max_loot_cap=max_loot_target)
             
         missing = False
         if smart_template:
             template = smart_template
-            # Already checked reservation success above, so if we're here, it's worth the trip!
-                
             if requires_strict and hasattr(self.troopmanager, "carry_capacity"):
                 achieved_capacity = sum(self.troopmanager.carry_capacity.get(u, 0) * int(c) for u, c in smart_template.items())
                 if achieved_capacity < target_capacity:
-                    missing = f"Requires capacity {target_capacity}, but only {achieved_capacity} available."
-                    self.logger.info("Farming scale-up failed for %s. %s", target["id"], missing)
+                    missing = "Insufficient capacity for loss-compensation"
         else:
             missing = self.enough_in_village(send_template)
             template = send_template
 
         if not missing:
-            cached = self.can_attack(vid=target["id"], clear=False)
-            if cached:
-                attack_result = self.attack(target["id"], troops=template)
-                if attack_result == "forced_peace":
+            # Pass cache_entry to can_attack for better performance
+            attack_allowed = self.can_attack(vid=target_id, clear=False, cache_entry=cache_entry)
+            if attack_allowed:
+                attack_result = self.attack(target_id, troops=template)
+                if attack_result in ("forced_peace", "farm_bag_full"):
                     return 0
-                if attack_result == "farm_bag_full":
-                    return 0
-                self.logger.info(
-                    "Attacking %s -> %s (%s)" ,self.village_id, target["id"], str(template)
-                )
-                self.wrapper.reporter.report(
-                    self.village_id,
-                    "TWB_FARM",
-                    "Attacking %s -> %s (%s)"
-                    % (self.village_id, target["id"], str(template)),
-                    )
                 if attack_result:
-                    for u in template:
-                        self.troopmanager.troops[u] = str(
-                            int(self.troopmanager.troops[u]) - template[u]
-                        )
+                    for u, count in template.items():
+                        self.troopmanager.troops[u] = str(int(self.troopmanager.troops[u]) - count)
+                    
                     self.attacked(
-                        target["id"],
+                        target_id,
                         scout=True,
                         safe=True,
-                        high_profile=cached["high_profile"]
-                        if type(cached) == dict
-                        else False,
-                        low_profile=cached["low_profile"]
-                        if type(cached) == dict and "low_profile" in cached
-                        else False,
+                        high_profile=cache_entry.get("high_profile", False) if cache_entry else False,
+                        low_profile=cache_entry.get("low_profile", False) if cache_entry else False,
                     )
                     return 1
                 else:
-                    self.logger.debug(
-                        "Ignoring target %s because unable to attack", target["id"]
-                    )
-                    self._unknown_ignored.append(target["id"])
+                    self.logger.debug("Target %s ignored: unable to attack (bot-protection?)", target_id)
+                    self._unknown_ignored.append(target_id)
         else:
-            self.logger.debug(
-                "Not sending additional farm because not enough units: %s", missing
-            )
+            self.logger.debug("Stopping village cycle: missing units for %s (%s)", target_id, missing)
             return -1
         return 0
 
@@ -495,135 +461,76 @@ class AttackManager:
         self.attacked(vid, scout=True, safe=False)
         return True
 
-    def can_attack(self, vid, clear=False):
+    def can_attack(self, vid, clear=False, cache_entry=None):
         """
-        Checks if it is safe en engage
-        If not an amount of 5 scouts will be sent
+        Checks if it is safe to engage
         """
-        cache_entry = AttackCache.get_cache(vid)
-
-        if cache_entry and cache_entry["last_attack"]:
-            last_attack = datetime.fromtimestamp(cache_entry["last_attack"])
-            now = datetime.now()
-            if last_attack < now - timedelta(hours=12):
-                self.logger.debug(f"Attacked long ago %s, trying scout attack", {last_attack})
-                if self.scout(vid):
-                    return False
+        if not cache_entry:
+            cache_entry = AttackCache.get_cache(vid)
 
         if not cache_entry:
-            status = self.repman.safe_to_engage(vid)
-            if status == 1:
-                return True
-
+            # No cache? Scout it first
             if self.troopmanager.can_scout:
                 self.scout(vid)
-                return False
-            self.logger.warning(
-                "%s will be attacked but scouting is not possible (yet), going in blind!", vid
-            )
-            return True
+            return False
 
-        if not cache_entry["safe"] or clear:
-            if cache_entry["scout"] and self.repman:
+        # --- TTL CHECK (12h) ---
+        last_attack = cache_entry.get("last_attack", 0)
+        if last_attack > 0:
+            age_h = (time.time() - last_attack) / 3600
+            if age_h > 12 and self.troopmanager.can_scout:
+                self.logger.debug("Village %s report expired (%.1fh). Re-scouting.", vid, age_h)
+                self.scout(vid)
+                return False
+
+        if not cache_entry.get("safe", True) or clear:
+            # Handle unsafe targets
+            if cache_entry.get("scout") and self.repman:
                 status = self.repman.safe_to_engage(vid)
-                if status == -1:
-                    self.logger.info(
-                        "Checking %s: scout report not yet available", vid
-                    )
-                    return False
+                if status == 1:
+                    return True
                 if status == 0:
-                    if cache_entry["last_attack"] + self.farm_low_prio_wait * 2 > int(time.time()):
-                        self.logger.info(f"{vid}: Old scout report found ({cache_entry['last_attack']}), re-scouting")
+                    if cache_entry.get("last_attack", 0) + self.farm_low_prio_wait * 2 > int(time.time()):
+                        self.logger.info(f"{vid}: Old scout report found, re-scouting")
                         self.scout(vid)
                         return False
                     else:
-                        self.logger.info(
-                            "%s: scout report noted enemy units, ignoring", vid
-                        )
+                        self.logger.info("%s: scout report noted enemy units, ignoring", vid)
                         return False
-                self.logger.info(
-                    "%s: scout report noted no enemy units, attacking", vid
-                )
+                self.logger.info("%s: scout report noted no enemy units, attacking", vid)
                 return True
 
-            self.logger.debug(
-                "%s will be ignored for attack because unsafe, set safe:true to override", vid
-            )
+            self.logger.debug("%s will be ignored for attack because unsafe", vid)
             return False
 
-        if not cache_entry["scout"] and self.troopmanager.can_scout:
+        if not cache_entry.get("scout") and self.troopmanager.can_scout:
             self.scout(vid)
             return False
+
         min_time = self.farm_default_wait
-        if cache_entry["high_profile"]:
+        if cache_entry.get("high_profile"):
             min_time = self.farm_high_prio_wait
-        if "low_profile" in cache_entry and cache_entry["low_profile"]:
+        if cache_entry.get("low_profile"):
             min_time = self.farm_low_prio_wait
         
-        # LVA: Apply competition jitter
-        jitter_pct = DatabaseManager.get_lva_jitter(vid)
-        if jitter_pct > 0:
-            self.logger.info("Competition detected for %s, applying %.1f%% jitter to delay", vid, jitter_pct * 100)
-            min_time = int(min_time * (1 + jitter_pct))
+        # Apply LVA jitter if available
+        try:
+            jitter_pct = DatabaseManager.get_lva_jitter(vid)
+            if jitter_pct > 0:
+                min_time = int(min_time * (1 + jitter_pct))
+        except Exception: pass
 
-        if cache_entry and self.repman:
-            res_left, res = self.repman.has_resources_left(vid)
-            total_loot = 0
-            for x in res:
-                total_loot += int(res[x])
-
-            if res_left and total_loot > 100:
-                self.logger.debug(f"Draining farm of resources! Sending attack to get {res}.")
-                min_time = int(self.farm_high_prio_wait / 2)
-
-        if cache_entry["last_attack"] + min_time > int(time.time()):
-            self.logger.debug(
-                "%s will be ignored because of previous attack (%d sec delay between attacks)",
-                vid, min_time
-            )
+        if last_attack + min_time > int(time.time()):
             return False
 
-        # --- FARM OPTIMIZER (CONTESTED DETECTION) ---
-        optimizer = FarmOptimizer(
-            self.village_id,
-            default_wait=self.farm_default_wait,
-            high_prio_wait=self.farm_high_prio_wait,
-            low_prio_wait=self.farm_low_prio_wait,
-        )
-        
-        # Calculate distance for travel time estimation
-        distance = 0
+        # --- FARM OPTIMIZER ---
+        optimizer = FarmOptimizer(self.village_id)
+        dist = 0
         if vid in self.map.villages:
-            distance = self.map.get_dist(self.map.villages[vid]["location"])
+            dist = self.map.get_dist(self.map.villages[vid]["location"])
             
-        # Get slowest unit from template for speed estimation
-        slowest_unit = "light"
-        from game.farm_optimizer import UNIT_SPEEDS
-        
-        active_template = self.template
-        if isinstance(active_template, list) and len(active_template) > 0:
-            active_template = active_template[0]
-            
-        if isinstance(active_template, dict):
-             current_max = 0
-             for u in active_template:
-                 speed = UNIT_SPEEDS.get(u, 10.0)
-                 if speed > current_max:
-                     current_max = speed
-                     slowest_unit = u
-
-        recommended_wait, reason = optimizer.evaluate(vid, cache_entry["last_attack"], 
-                                                     distance=distance, slowest_unit=slowest_unit)
-        
-        if cache_entry["last_attack"] + recommended_wait > int(time.time()):
-            if reason == "morning_rush_wait":
-                self.logger.info("Morning Rush: village %s scheduled for 08:00:01 (wait %d s)", 
-                                 vid, recommended_wait)
-            else:
-                self.logger.debug(
-                    "FarmOptimizer: skipping %s (reason=%s, recommended_wait=%d)",
-                    vid, reason, recommended_wait
-                )
+        recommended_wait, reason = optimizer.evaluate(vid, last_attack, distance=dist)
+        if last_attack + recommended_wait > int(time.time()):
             return False
             
         return cache_entry

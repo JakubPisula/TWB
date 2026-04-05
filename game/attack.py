@@ -96,7 +96,11 @@ class AttackManager:
                 )
         self.get_targets()
         
+        # --- PERFORMANCE (POINT 3) ---
+        # Single read of all relevant cache entries for this village cycle
+        all_cache = AttackCache.cache_grab()
         processed_targets = set()
+        
         # Statistics for the current run
         stats = {"sent": 0, "skipped_reservation": 0, "total_targets": 0}
         
@@ -112,10 +116,12 @@ class AttackManager:
                 continue
             processed_targets.add(target_id)
 
+            cache_entry = all_cache.get(target_id)
+
             if type(self.template) == list:
                 f = False
                 for t_entry in self.template:
-                    out_res = self.send_farm(target_data, t_entry)
+                    out_res = self.send_farm(target_data, t_entry, cache_entry=cache_entry)
                     if out_res == 1:
                         f = True
                         stats["sent"] += 1
@@ -128,7 +134,7 @@ class AttackManager:
                 if not f:
                     continue
             else:
-                out_res = self.send_farm(target_data, self.template)
+                out_res = self.send_farm(target_data, self.template, cache_entry=cache_entry)
                 if out_res == 1:
                     stats["sent"] += 1
                 elif out_res == 0:
@@ -137,18 +143,12 @@ class AttackManager:
                     self.logger.info("Stopping farming run for village %s: no more units available.", self.village_id)
                     break
 
-        # Advanced Logging: Overstacking detection
         if stats["total_targets"] > 0:
-            rejection_rate = (stats["skipped_reservation"] / stats["total_targets"]) * 100
             self.logger.info(
-                "Farming Loop Summary: Sent: %d, Reserved: %d (Rejection Rate: %.1f%%)",
-                stats["sent"], stats["total_targets"] - stats["skipped_reservation"], rejection_rate
+                "Farming Summary: Sent: %d, Reserved/Skip: %d, Targets: %d",
+                stats["sent"], stats["skipped_reservation"], stats["total_targets"]
             )
-            if rejection_rate > 75 and stats["total_targets"] > 5:
-                self.logger.warning(
-                    "HIGH OVERSTACKING DETECTED (%.1f%%). Consider increasing 'farm_radius' or decreasing troop allocation for village %s.",
-                    rejection_rate, self.village_id
-                )
+        return True
 
     def get_smart_troops(self, template, max_loot_cap=None):
         """

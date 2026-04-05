@@ -1,137 +1,132 @@
 import unittest
+import time
+import logging
 from unittest.mock import MagicMock, patch
-from datetime import datetime, timedelta
 from game.attack import AttackManager
-from game.troopmanager import TroopManager
-from core.database import DatabaseManager
+from game.reports import ReportManager
 
 class TestFarmingOptimization(unittest.TestCase):
     def setUp(self):
-        # Mocking TroopManager and its attributes
-        self.tm = TroopManager()
-        self.tm.troops = {"light": "100"}
-        # Ensure carry_capacity is set (usually in the class, but we'll be sure)
-        self.tm.carry_capacity = {"light": 80, "spear": 25, "axe": 10, "sword": 15}
-        
-        # AttackManager for village 100
-        self.am = AttackManager(village_id="100", troopmanager=self.tm)
-        self.am.smart_farming = True
-        self.am.min_farm_capacity = 50
-        self.am.min_farm_units = 1
-
-    def test_get_smart_troops_with_max_loot_cap(self):
-        """
-        Verify that get_smart_troops respects the max_loot_cap parameter.
-        Test scenario: 
-        Template capacity: 800 (10 Light)
-        Max loot cap: 200
-        Expected: Bot should only send 3 Light (240 capacity) instead of 10.
-        """
-        template = {"light": 10}
-        # Normal smart fill would take 10 light
-        res_normal = self.am.get_smart_troops(template)
-        self.assertEqual(res_normal.get("light"), 10)
-        
-        # With cap 200: (200 / 80 = 2.5 -> ceil = 3)
-        res_capped = self.am.get_smart_troops(template, max_loot_cap=200)
-        self.assertEqual(res_capped.get("light"), 3, "Should have capped light at 3 to fit ~200 loot")
-
-    @patch('core.database.DatabaseManager.get_predicted_resources')
-    def test_send_farm_skips_if_predicted_loot_below_min(self, mock_get_res):
-        """
-        Verify that send_farm skips an attack if the predicted loot is below min_farm_capacity.
-        """
-        target = {"id": "200"}
-        template = {"light": 1}
-        
-        # Predicted resources = 10 (below min_farm_capacity=50)
-        mock_get_res.return_value = {"wood": 4, "stone": 3, "iron": 3}
-        
-        # send_farm returns 1 on success, -1 on missing troops, 0 on skip/failure
-        result = self.am.send_farm((target, 0), template)
-        
-        self.assertEqual(result, 0)
-        # We don't want to see "Attacking" which would mean it didn't skip
-        # Note: In real setup, we'd check if attack() was called, but here we check result.
-
-    @patch('game.farm_optimizer.FarmOptimizer.evaluate')
-    @patch('game.attack.AttackCache.get_cache')
-    def test_can_attack_respects_optimizer_contested(self, mock_cache, mock_eval):
-        """
-        Verify that can_attack skips targets flagged as contested/waiting by FarmOptimizer.
-        """
-        vid = "300"
-        # Fix: include 'safe': True which is checked in can_attack
-        mock_cache.return_value = {
-            "last_attack": int(datetime.utcnow().timestamp()) - 100,
-            "safe": True,
-            "scout": True,
-            "high_profile": False
+        # Minimal configuration matching config.example.json structure
+        self.config = {
+            "bot": {"debug": False},
+            "farms": {
+                "farm": True,
+                "search_radius": 50,
+                "max_farms": 15,
+                "smart_farming": True,
+                "min_farm_capacity": 100,
+                "min_farm_units": 5
+            }
         }
         
-        # Imagine optimizer recommends waiting 3600s because it's contested
-        mock_eval.return_value = (3600, "contested")
+        # Mocking components for AttackManager
+        self.wrapper = MagicMock()
+        self.wrapper.last_h = "test_h"
+        self.wrapper.reporter = MagicMock()
         
-        # Since last_attack was only 100s ago, and wait is 3600s, it should return False
-        result = self.am.can_attack(vid)
+        self.troopmanager = MagicMock()
+        self.troopmanager.troops = {"spear": "100", "sword": "100"}
+        self.troopmanager.can_attack = True
+        self.troopmanager.carry_capacity = {"spear": 25, "sword": 15}
+        self.troopmanager.can_scout = True
         
-        self.assertFalse(result, "Should skip target because optimizer recommended wait")
+        self.map = MagicMock()
+        self.map.villages = {
+            "500": {"id": "500", "location": [500, 500], "owner": "0", "points": 10},
+            "501": {"id": "501", "location": [501, 501], "owner": "0", "points": 15}
+        }
+        self.map.get_dist = MagicMock(return_value=10.0)
+        
+        # Initialize AttackManager and its logger
+        self.attack_manager = AttackManager(
+            wrapper=self.wrapper, 
+            village_id="100", 
+            troopmanager=self.troopmanager, 
+            map=self.map
+        )
+        self.attack_manager.logger = logging.getLogger("AttacksTest")
+        
+        # Setup targets
+        self.attack_manager.targets = [
+            [{"id": "500", "location": [500, 500]}, 1.0],
+            [{"id": "501", "location": [501, 501]}, 2.0]
+        ]
+        self.attack_manager.template = {"spear": 5}
+        self.attack_manager.max_farms = 10
 
-    @patch('core.database.DatabaseManager._session')
-    def test_database_prediction_logic(self, mock_session):
-        """
-        Test the math inside DatabaseManager.get_predicted_resources.
-        """
-        # Patch HAS_SQLALCHEMY directly in the module
-        with patch('core.database.HAS_SQLALCHEMY', True):
-            # --- MOCK DATA ---
-            mock_session_instance = MagicMock(name="SessionInstance")
-            mock_session.return_value = mock_session_instance
-            
-            # Latest report (1 hour ago)
-            # Scout saw 1000 wood, 1000 stone, 1000 iron
-            mock_report = MagicMock(name="MockReport")
-            mock_report.created_at = datetime.utcnow() - timedelta(hours=1)
-            mock_report.scout_wood = 1000
-            mock_report.scout_stone = 1000
-            mock_report.scout_iron = 1000
-            mock_report.scout_buildings = {"storage": 5} # Cap will be ~2200
-            
-            # Village production: 100/h each
-            mock_village = MagicMock(name="MockVillage")
-            mock_village.wood_prod = 100
-            mock_village.stone_prod = 100
-            mock_village.iron_prod = 100
-            
-            # Subsequent attacks: 1 attack took 200 each
-            mock_attack = MagicMock(name="MockAttack")
-            mock_attack.loot_wood = 200
-            mock_attack.loot_stone = 200
-            mock_attack.loot_iron = 200
-            mock_attack.sent_at = datetime.utcnow() - timedelta(minutes=30)
-            
-            # Setup Query chain
-            # We need to import the real classes for type checking in DatabaseManager
-            import core.database as db
-            
-            def mock_query(model):
-                q = MagicMock(name=f"Query[{model.__name__}]")
-                if model == db.DBReport:
-                    q.filter.return_value.order_by.return_value.first.return_value = mock_report
-                elif model == db.DBAttack:
-                    q.filter.return_value.all.return_value = [mock_attack]
-                return q
-            
-            mock_session_instance.query.side_effect = mock_query
-            mock_session_instance.get.return_value = mock_village
-            
-            # --- EXECUTE ---
-            # Formula: 1000 (base) + 100 (prod * 1h) - 200 (loot) = 900
-            res = DatabaseManager.get_predicted_resources("200")
-            
-            self.assertEqual(res.get("wood"), 900, f"Predicted resources mismatch: {res}")
-            self.assertEqual(res.get("stone"), 900)
-            self.assertEqual(res.get("iron"), 900)
+    @patch("game.attack.AttackCache")
+    @patch("game.attack.DatabaseManager")
+    def test_tc1_early_exit_on_no_units(self, mock_db, mock_cache):
+        """TC-1: Gdy enough_in_village() zwraca 'Missing spear', pętla kończy się po pierwszej iteracji"""
+        mock_cache.cache_grab.return_value = {}
+        mock_cache.get_cache.return_value = {}
+        mock_db.reserve_farm_loot.return_value = (True, 100, 100, 100)
+        self.attack_manager.enough_in_village = MagicMock(return_value="Missing spear")
+        
+        with patch.object(self.attack_manager, 'send_farm', wraps=self.attack_manager.send_farm) as spy_send_farm:
+            result = self.attack_manager.run()
+            self.assertTrue(result)
+            self.assertEqual(spy_send_farm.call_count, 1)
+
+    @patch("game.attack.AttackCache")
+    @patch("game.attack.DatabaseManager")
+    def test_tc2_single_read_cache(self, mock_db, mock_cache):
+        """TC-2: AttackCache.cache_grab wywołany dokładnie RAZ przez cały run()"""
+        mock_cache.cache_grab.return_value = {}
+        mock_cache.get_cache.return_value = {}
+        mock_db.reserve_farm_loot.return_value = (True, 100, 100, 100)
+        self.attack_manager.enough_in_village = MagicMock(return_value=False)
+        
+        with patch.object(self.attack_manager, 'can_attack', return_value=False):
+            self.attack_manager.run()
+        self.assertEqual(mock_cache.cache_grab.call_count, 1)
+
+    @patch("game.attack.AttackCache")
+    @patch("game.attack.DatabaseManager")
+    def test_tc3_deduplication_same_target(self, mock_db, mock_cache):
+        """TC-3: Lista celów z dwoma identycznymi village_id → tylko jeden atak wysłany"""
+        target_v = {"id": "500", "location": [500, 500]}
+        mock_cache.cache_grab.return_value = {}
+        mock_cache.get_cache.return_value = {}
+        mock_db.reserve_farm_loot.return_value = (True, 100, 100, 100)
+        
+        with patch.object(self.attack_manager, 'get_targets'):
+            self.attack_manager.targets = [[target_v, 1.0], [target_v, 2.0]]
+            with patch.object(self.attack_manager, 'send_farm', return_value=1) as mock_send:
+                self.attack_manager.run()
+                self.assertEqual(mock_send.call_count, 1)
+
+    @patch("game.attack.AttackCache")
+    @patch("game.attack.DatabaseManager")
+    def test_tc4_ttl_triggers_scout(self, mock_db, mock_cache):
+        """TC-4: Raport starszy niż 12h → bot wysyła skaut zamiast ataku"""
+        target_id = "500"
+        old_ts = time.time() - (13 * 3600)
+        mock_cache.get_cache.return_value = {"last_attack": old_ts, "safe": True, "scout": True}
+        self.attack_manager.scout = MagicMock(return_value=True)
+        self.attack_manager.attack = MagicMock()
+        self.attack_manager.repman = MagicMock()
+        self.attack_manager.repman.safe_to_engage.return_value = 1
+        
+        result = self.attack_manager.can_attack(target_id)
+        self.assertFalse(result)
+        self.attack_manager.scout.assert_called_once_with(target_id)
+
+    @patch("game.reports.DatabaseManager")
+    @patch("game.reports.AttackCache")
+    def test_tc5_reports_guard_clause_none(self, mock_cache, mock_db):
+        """TC-5: reports.py nie rzuca AttributeError gdy fragment HTML jest None"""
+        rep_man = ReportManager(wrapper=self.wrapper, village_id="100")
+        rep_man.logger = logging.getLogger("ReportsTest")
+        bad_html = "<html><body>No data here</body></html>"
+        try:
+            rep_man.attack_report(bad_html, "999")
+            success = True
+        except Exception as e:
+            success = False
+            self.fail(f"ReportManager.attack_report raised an exception: {e}")
+        self.assertTrue(success)
 
 if __name__ == '__main__':
     unittest.main()

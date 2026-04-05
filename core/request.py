@@ -77,13 +77,38 @@ class WebWrapper:
             res = self.web.get(url=url, headers=headers, timeout=30)
             self.logger.debug("GET %s [%d]", url, res.status_code)
             self.post_process(res)
-            if 'data-bot-protect="forced"' in res.text:
-                self.logger.warning("Bot protection hit! cannot continue")
+            
+            # Enhanced bot/security detection patterns
+            bot_patterns = [
+                'data-bot-protect', 
+                'screen=bot_protect', 
+                'bot_protection', 
+                'captcha', 
+                'security_check',
+                'p_sid_bot',
+                'id="bot_check"',
+                'bot_check',
+                'Weryfikacja bota',
+                'Weryfikacja gracza',
+                'Bot-Schutz',
+                'confirm_captcha',
+                'p_sid_bot'
+            ]
+            
+            if any(p in res.text for p in bot_patterns):
+                self.logger.warning("Bot protection (captcha) hit! Page: %s", res.url)
                 self.reporter.report(
-                    0, "TWB_RECAPTCHA", "Stopping bot, press any key once captcha has been solved")
-                Notification.send("Bot protection hit! cannot continue")
-                input("Press any key...")
-                return self.get_url(url, headers)
+                    0, "TWB_RECAPTCHA", "Stopping bot, solve the captcha in browser and resume.")
+                Notification.send("Bot protection hit! Solve captcha.")
+                
+                import sys
+                if sys.stdin.isatty():
+                    input("Solve the captcha in your browser and then press ENTER here to continue...")
+                    return self.get_url(url, headers)
+                else:
+                    self.logger.error("Non-interactive mode: cannot wait for captcha solution. Stopping.")
+                    # Return response so caller can see the screen type but we shouldn't continue
+                    return res
             return res
         except Exception as e:
             self.logger.warning("GET %s: %s", url, str(e))
@@ -159,7 +184,7 @@ class WebWrapper:
                     pass
             self.set_cookies(session_data['cookies'])
             get_test = self.get_url("game.php?screen=overview")
-            if "game.php" in get_test.url:
+            if get_test and "game.php" in get_test.url:
                 return True
             self.logger.warning("Current database session not valid")
             # Clear invalid session in DB
@@ -236,32 +261,28 @@ class WebWrapper:
                 
                 get_test_url = urljoin(self.endpoint, "game.php?screen=overview")
                 try:
-                    import urllib.request
-                    class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
-                        def http_error_302(self, req, fp, code, msg, headers):
-                            return fp
-                    opener = urllib.request.build_opener(NoRedirectHandler())
-                    urllib.request.install_opener(opener)
+                    # Use requests directly instead of urllib to avoid global side effects
+                    self.logger.debug(f"Verifying DB session cookies at: {get_test_url}")
                     
-                    req_test = urllib.request.Request(get_test_url)
-                    req_test.add_header('User-Agent', self.headers.get("user-agent", ""))
-                    req_test.add_header('Cookie', cookie_str)
+                    # Create temporary cookies dict for verification
+                    test_headers = dict(self.headers)
+                    test_headers["Cookie"] = cookie_str
                     
-                    res_test = urllib.request.urlopen(req_test)
+                    res_test = self.web.get(get_test_url, headers=test_headers, allow_redirects=False, timeout=10)
                     
                     if getattr(self, "logger", None):
                         self.logger.info(f"Loaded {len(session_data['cookies'])} cookies from Web Panel!")
-                        self.logger.debug(f"URLLIB Request URL: {get_test_url}")
-                        self.logger.debug(f"URLLIB Header User-Agent: {self.headers.get('user-agent', '')}")
-                        self.logger.debug(f"URLLIB Header Cookie: {cookie_str}")
                     
-                    if res_test.getcode() == 200:
+                    # 200 means we stayed on the overview page (logged in)
+                    # 302 to index.php or similar means we are not logged in
+                    if res_test.status_code == 200:
                         self.logger.info("Found synced cookies from DB! Login successful.")
+                        # Transfer verified cookies to main session
+                        self.headers["Cookie"] = cookie_str
                         self.web.cookies.clear()
                         return True
                     else:
-                        self.logger.warning(f"Cookies from DB are invalid. Server returned redirect or error (code: {res_test.getcode()})")
-                        self.logger.warning(f"Sent cookies were: {session_data['cookies'].keys()}")
+                        self.logger.warning(f"Cookies from DB are invalid. Server returned status {res_test.status_code}")
                         db_s = DatabaseManager._session()
                         if db_s:
                             try:
@@ -283,12 +304,18 @@ class WebWrapper:
                         finally:
                             db_s.close()
                 
-            # Sprawdź bez blokowania wstrzymania dla wejścia z klawiatury (max 1 sekunda na cykl)
-            if sys.stdin in select.select([sys.stdin], [], [], 1.0)[0]:
-                cinp = sys.stdin.readline().strip()
-                if cinp:
-                    # Ktoś wpisał własne ręczne ciastko
-                    break
+            # Sprawdź bez blokowania wstrzymania dla wejścia z klawiatury (max 1 sekunda na cykl).
+            # Gdy bot uruchomiony bez TTY (nohup/subprocess), select() rzuca OSError –
+            # ignorujemy to i czekamy na ciastka z bazy danych.
+            try:
+                if sys.stdin.fileno() >= 0 and sys.stdin in select.select([sys.stdin], [], [], 1.0)[0]:
+                    cinp = sys.stdin.readline().strip()
+                    if cinp:
+                        # Ktoś wpisał własne ręczne ciastko
+                        break
+            except (OSError, ValueError):
+                # Brak TTY – działamy w trybie headless, czekamy na ciastka z DB
+                time.sleep(1)
 
         cookies = {}
         for itt in cinp.split(';'):

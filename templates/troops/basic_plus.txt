@@ -4,13 +4,17 @@
     "level": 1,
     "build": {
       "barracks": {
-        "sword": 10,
-        "spear": 30
+        "spear": 30,
+        "sword": 10
       }
     },
     "farm": [
-        {"spear": 10},
-        {"spear": 10}
+      {
+        "spear": 10
+      },
+      {
+        "spear": 10
+      }
     ]
   },
   {
@@ -18,83 +22,86 @@
     "level": 5,
     "build": {
       "barracks": {
-        "sword": 50,
-        "spear": 150
+        "spear": 150,
+        "sword": 50
       }
     },
     "farm": [
-        {"spear": 30},
-        {"spear": 30}
+      {
+        "spear": 30
+      },
+      {
+        "spear": 30
+      }
     ]
   },
   {
     "building": "stable",
     "level": 1,
-    "upgrades": {
-        "sword": 1,
-        "spy": 1,
-        "light": 1
-    },
     "build": {
       "barracks": {
         "spear": 300,
         "sword": 150
       },
       "stable": {
-        "spy": 10,
-        "light": 100
+        "light": 100,
+        "spy": 10
       }
     },
     "farm": [
-        {"light": 5},
-        {"light": 10}
+      {
+        "light": 5
+      },
+      {
+        "light": 10
+      }
     ]
   },
   {
     "building": "stable",
     "level": 3,
-    "upgrades": {
-        "sword": 2,
-        "light": 2,
-        "spear": 2
-    },
     "build": {
       "barracks": {
         "spear": 500,
         "sword": 300
       },
       "stable": {
-        "spy": 30,
-        "light": 300
+        "light": 300,
+        "spy": 30
       }
     },
     "farm": [
-        {"light": 5},
-        {"light": 10},
-        {"light": 15}
+      {
+        "light": 5
+      },
+      {
+        "light": 10
+      },
+      {
+        "light": 15
+      }
     ]
   },
   {
     "building": "stable",
     "level": 5,
-    "upgrades": {
-        "sword": 3,
-        "light": 3,
-        "spear": 3
-    },
     "build": {
       "barracks": {
         "spear": 1000,
         "sword": 500
       },
       "stable": {
-        "spy": 100,
-        "light": 1000
+        "light": 1000,
+        "spy": 50
       }
     },
     "farm": [
-        {"light": 10},
-        {"light": 25}
+      {
+        "light": 10
+      },
+      {
+        "light": 25
+      }
     ]
   }
 ]

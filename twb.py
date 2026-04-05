@@ -29,8 +29,11 @@ import sys
 import signal
 import time
 import traceback
+from game.scavenging import ScavengingManager
+from core.world_data import WorldDataManager
 import coloredlogs
 import requests
+import psutil
 
 from core.notification import Notification
 from core.updater import check_update
@@ -282,10 +285,19 @@ class TWB:
             logger.warning(
                 "No villages were detected from the overview page! "
                 "This usually means the server returned the wrong page type "
-                f"(e.g., 'overview' instead of 'overview_villages'). "
+                f"(e.g., 'overview' instead of 'overview_villages' or a captcha). "
                 f"Server returned screen type: '{overview_page.received_screen}'. "
                 "Falling back to config file villages."
             )
+            # Dump HTML if screen is unknown or might be bot protection
+            if overview_page.received_screen in ["unknown", "bot_protection", "login_screen"]:
+                html_dump = str(overview_page.result_get.text)
+                os.makedirs("cache/logs", exist_ok=True)
+                fname = "cache/logs/unknown_screen_debug.html"
+                with open(fname, "w", encoding="utf-8") as f:
+                    f.write(html_dump)
+                logger.warning(f"Saved {overview_page.received_screen} screen HTML to {fname} for debugging. Snippet: {html_dump[:500]}")
+
             # Ultimate fallback: Use villages from config file
             if "villages" in config and config["villages"]:
                 self.found_villages = list(config["villages"].keys())
@@ -433,15 +445,52 @@ class TWB:
                 )
                 time.sleep(sleep)
             else:
+                # Ensure lock is held or wait if needed (simple check for now)
+                lock_file = "cache/bot.lock"
+                os.makedirs("cache", exist_ok=True)
+                if os.path.exists(lock_file):
+                    try:
+                        with open(lock_file, "r") as f:
+                            old_pid = int(f.read().strip())
+                        if psutil.pid_exists(old_pid) and old_pid != os.getpid():
+                            logger.error(f"FATAL: Another instance (PID {old_pid}) is already running. Quitting.")
+                            return
+                    except:
+                        pass
+                
+                with open(lock_file, "w") as f:
+                    f.write(str(os.getpid()))
+
                 # --- PERFORMANCE (POINT 4) ---
                 # Get cached config
                 config = self.config()
+                # Set missing farm defaults to avoid warnings
+                if "farms" not in config:
+                    config["farms"] = {}
+                if "map_scan_radius" not in config["farms"]:
+                    config["farms"]["map_scan_radius"] = 1
+                if "map_scan_delay" not in config["farms"]:
+                    config["farms"]["map_scan_delay"] = 5
+                    
                 if config["bot"].get("debug", False):
                     logging.getLogger().setLevel(logging.DEBUG)
                 else:
                     logging.getLogger().setLevel(logging.INFO)
                 # --- END PERFORMANCE ---
                 overview_page, config = self.get_overview(config)
+                
+                # Check for bot protection or session expiration early to avoid bans
+                if overview_page.received_screen == "bot_protection":
+                    logger.error("FATAL: Bot protection (captcha) detected! Stopping bot to avoid ban.")
+                    logger.error("Please solve the captcha in your browser and sync cookies again.")
+                    # Give time for the user to see the message if running interactively
+                    return
+                
+                if overview_page.received_screen == "login_screen":
+                    logger.error("FATAL: Session expired or bot is logged out. Stopping bot.")
+                    logger.error("Please sync cookies using the browser extension or manual login.")
+                    return
+
                 has_changed, new_cf = self.get_world_options(overview_page, config)
                 if has_changed:
                     print("Updated world options")
@@ -453,13 +502,17 @@ class TWB:
                     # --- END PERFORMANCE ---
                     print("Deployed new configuration file")
                 village_number = 1
+                rm = None
+                # Randomize village execution order to avoid predictable timing patterns
+                shuffled_villages = copy.copy(self.villages)
+                random.shuffle(shuffled_villages)
+                
                 logger = logging.getLogger("TWB")
-                for village in self.villages:
+                for village in shuffled_villages:
                     if village.village_id not in self.found_villages:
                         logger.warning(
                             f"Village {village.village_id} will be ignored because it was not detected "
-                            f"in the overview page. Found villages: {self.found_villages}. "
-                            f"This might be a detection issue rather than the village being unavailable."
+                            f"in the overview page. Found villages: {self.found_villages}."
                         )
                         continue
                     if not rm:
@@ -479,8 +532,28 @@ class TWB:
                         num_pad = fs % village_number
                         template = template.replace("{num}", num_pad)
                         village.village_set_name = template
+                        village_number += 1 # Moved inside the condition as it's only for naming
 
-                    village.run(config=config)
+                    try:
+                        village.run(config=config)
+                    except Exception as e:
+                        last_url = self.wrapper.last_response.url if self.wrapper and self.wrapper.last_response else "Unknown"
+                        
+                        # Check if this exception was due to bot protection or login screen
+                        if "Bot protection" in str(e) or "captcha" in str(e).lower():
+                            logger.error(f"FATAL: Bot protection detected for village {village.village_id}. Stopping bot.")
+                            return
+                        if "Session expired" in str(e) or "Logged out" in str(e):
+                            logger.error(f"FATAL: Session expired for village {village.village_id}. Stopping bot.")
+                            return
+
+                        logger.error(f"FATAL: Village {village.village_id} execution failed: {e}")
+                        logger.error(f"Last URL: {last_url}")
+                        if self.wrapper and self.wrapper.last_response:
+                             snippet = self.wrapper.last_response.text[:500].replace('\n', ' ')
+                             logger.debug(f"Last HTML snippet: {snippet}")
+                        logging.debug(traceback.format_exc())
+                        continue
 
                     if (
                             village.get_config(
@@ -493,7 +566,6 @@ class TWB:
                             if village.def_man.allow_support_recv
                             else False
                         )
-                    village_number += 1
 
                 if len(defense_states) and config["farms"]["farm"]:
                     for village in self.villages:
@@ -512,8 +584,17 @@ class TWB:
                 dt_next = dtn + datetime.timedelta(0, sleep)
                 self.runs += 1
 
+                logging.debug("Starting farm_manager task")
                 VillageManager.farm_manager(verbose=True)
+                
+                logging.debug("Starting resource_balancer task")
                 VillageManager.resource_balancer(self.wrapper, config)
+                
+                # --- World Data Management ---
+                logging.debug("Starting world_manager task (Crawler + DB Sync)")
+                VillageManager.world_manager()
+                # -----------------------------
+                
                 print(
                     "Dead for %.2f minutes (next run at: %s)"
                     % (sleep / 60, dt_next.time())
@@ -533,6 +614,28 @@ class TWB:
             "cache/hunter"
         ]
         FileManager.create_directories(directories)
+
+        # --- DATABASE BOOTSTRAP ---
+        # Automatycznie naprawia widoki i migracje bazy danych przy każdym starcie
+        try:
+            from core.database import get_engine
+            from sqlalchemy import text
+            from scripts.debug_dashboard import DEBUG_SQL
+            from scripts.migration_smart_farming import MIGRATION_SQL
+            
+            engine = get_engine()
+            if "postgresql" in str(engine.url):
+                logging.info("Checking database migrations and dashboard views...")
+                with engine.connect() as conn:
+                    # Wykonaj migracje kolumn i triggerów
+                    conn.execute(text(MIGRATION_SQL))
+                    # Wykonaj tworzenie widoków dla dashboardu
+                    conn.execute(text(DEBUG_SQL))
+                    conn.commit()
+                logging.info("Database is up to date.")
+        except Exception as e:
+            logging.warning(f"Database bootstrap skipped or failed: {e}")
+        # --------------------------
         
         config = self.config()
         if "webmanager" in config and config["webmanager"].get("enabled", False):
@@ -540,11 +643,20 @@ class TWB:
             port = str(config["webmanager"].get("port", 5000))
             logging.info(f"Starting Web Panel on {host}:{port}")
             web_log = open("cache/webmanager.log", "a")
+            # Użyj Pythona z venv jeśli istnieje, inaczej systemowego
+            _venv_py = os.path.join(os.path.dirname(os.path.realpath(__file__)), "env", "bin", "python")
+            _python  = _venv_py if os.path.exists(_venv_py) else sys.executable
             self.web_process = subprocess.Popen(
-                [sys.executable, "webmanager/server.py", port], 
-                env=dict(os.environ, FLASK_RUN_HOST=host, FLASK_RUN_PORT=port),
+                [_python, "webmanager/server.py", port],
+                env=dict(
+                    os.environ,
+                    FLASK_RUN_HOST=host,
+                    FLASK_RUN_PORT=port,
+                    FLASK_DEBUG="0",      # wyłącz stat-reloader (nie duplikuje procesu)
+                    FLASK_ENV="production",
+                ),
                 stdout=web_log,
-                stderr=subprocess.STDOUT
+                stderr=subprocess.STDOUT,
             )
 
         try:
@@ -571,6 +683,7 @@ def main():
             t.start()
         except Exception as e:
             t.wrapper.reporter.report(0, "TWB_EXCEPTION", str(e))
+            logging.exception("TWB crashed with critical error")
             print("I crashed :(   %s" % str(e))
             Notification.send("TWB crashed: %s" % str(e))
             traceback.print_exc()

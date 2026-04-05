@@ -29,7 +29,7 @@ class Map:
         self.wrapper = wrapper
         self.village_id = village_id
 
-    def get_map(self, radius=0, fetch_delay=8):
+    def get_map(self, radius=0, fetch_delay=8, search_radius=None):
         """
         Fetch the map every 24ish hours and update the cache entries
         """
@@ -52,9 +52,32 @@ class Map:
                     
                     req_x = int(self.my_location[0]) + dx * 20
                     req_y = int(self.my_location[1]) + dy * 20
+                    
+                    if req_x < 0 or req_x > 1000 or req_y < 0 or req_y > 1000:
+                        continue
+
+                    # If search_radius is provided, skip sectors that are entirely outside of it
+                    if search_radius:
+                        # Find closest point in sector (req_x, req_y) to (req_x+19, req_y+19)
+                        # to our current location
+                        closest_x = max(req_x, min(int(self.my_location[0]), req_x + 19))
+                        closest_y = max(req_y, min(int(self.my_location[1]), req_y + 19))
+                        
+                        dist_to_sector = math.sqrt(
+                            (closest_x - self.my_location[0]) ** 2
+                            + (closest_y - self.my_location[1]) ** 2
+                        )
+                        if dist_to_sector > search_radius:
+                            continue
+
                     # Load exact coordinate map API
                     action_url = f"map&x={req_x}&y={req_y}"
                     res_scan = self.wrapper.get_action(village_id=self.village_id, action=action_url)
+                    
+                    # Random delay between sector requests to avoid bot detection
+                    import random
+                    time.sleep(random.uniform(1.2, 3.5))
+
                     scan_data = Extractor.map_data(res_scan)
                     if scan_data:
                         self.parse_map_tiles(scan_data, game_state)

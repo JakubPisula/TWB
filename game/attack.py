@@ -11,6 +11,9 @@ from datetime import timedelta
 
 from core.extractors import Extractor
 from core.filemanager import FileManager
+from core.database import DatabaseManager
+from game.farm_optimizer import FarmOptimizer
+from game.attack_cache import AttackCache
 
 
 class AttackManager:
@@ -55,6 +58,8 @@ class AttackManager:
 
     smart_farming = False
     smart_farming_priority = []
+    min_farm_capacity = 0
+    min_farm_units = 0
 
     def __init__(self, wrapper=None, village_id=None, troopmanager=None, map=None):
         """
@@ -91,8 +96,14 @@ class AttackManager:
                 )
         self.get_targets()
         ignored = []
+        # Statistics for the current run
+        stats = {"sent": 0, "skipped_reservation": 0, "total_targets": 0}
+        
+        targets = self.targets[0: self.max_farms]
+        stats["total_targets"] = len(targets)
+        
         # Limits the amount of villages that are farmed from the current village
-        for target in self.targets[0: self.max_farms]:
+        for target in targets:
             if type(self.template) == list:
                 f = False
                 for template in self.template:
@@ -101,41 +112,56 @@ class AttackManager:
                     out_res = self.send_farm(target, template)
                     if out_res == 1:
                         f = True
+                        stats["sent"] += 1
                         break
                     elif out_res == -1:
                         ignored.append(template)
+                    elif out_res == 0: # Reservation failed or other skip
+                        stats["skipped_reservation"] += 1
                 if not f:
                     continue
             else:
                 out_res = self.send_farm(target, self.template)
-                if out_res == -1:
+                if out_res == 1:
+                    stats["sent"] += 1
+                elif out_res == 0:
+                    stats["skipped_reservation"] += 1
+                elif out_res == -1:
                     break
 
-    def get_smart_troops(self, template):
+        # Advanced Logging: Overstacking detection
+        if stats["total_targets"] > 0:
+            rejection_rate = (stats["skipped_reservation"] / stats["total_targets"]) * 100
+            self.logger.info(
+                "Farming Loop Summary: Sent: %d, Reserved: %d (Rejection Rate: %.1f%%)",
+                stats["sent"], stats["total_targets"] - stats["skipped_reservation"], rejection_rate
+            )
+            if rejection_rate > 75 and stats["total_targets"] > 5:
+                self.logger.warning(
+                    "HIGH OVERSTACKING DETECTED (%.1f%%). Consider increasing 'farm_radius' or decreasing troop allocation for village %s.",
+                    rejection_rate, self.village_id
+                )
+
+    def get_smart_troops(self, template, max_loot_cap=None):
         """
         Calculates the troop composition based on loot capacity.
-
-        Smart farming replaces missing template troops with available units
-        to reach the desired loot capacity. Units are selected based on
-        priority (efficiency) order.
-
-        Returns:
-            dict: Optimized troop composition, or None if no suitable troops available
+        max_loot_cap: optional upper limit to resources we expect to find
         """
         if not self.troopmanager or not hasattr(self.troopmanager, "carry_capacity"):
-            self.logger.debug("Smart farming disabled: troopmanager or carry_capacity not available")
             return None
 
-        # Calculate target capacity from template
-        target_capacity = sum(
+        # Calculate base target capacity from template
+        template_capacity = sum(
             self.troopmanager.carry_capacity.get(unit, 0) * int(count)
             for unit, count in template.items()
         )
+        
+        # If we have a predicted cap, use it (but don't exceed what template allows)
+        target_capacity = template_capacity
+        if max_loot_cap is not None and max_loot_cap > 0:
+            target_capacity = min(template_capacity, max_loot_cap)
 
-        # FIX: Zero-capacity templates (e.g., only spies/rams) should return None
-        # to trigger the normal availability check in send_farm()
         if target_capacity == 0:
-            self.logger.debug("Smart farming skipped: template has zero carry capacity (spies/rams only)")
             return None
 
         # Use dictionary comprehension for cleaner code
@@ -146,12 +172,21 @@ class AttackManager:
 
         # Phase 1: Use template units first (prefer original template composition)
         for unit, count in template.items():
+            if current_load >= target_capacity:
+                break
             count = int(count)
             if unit in available_troops and available_troops[unit] > 0:
-                take = min(available_troops[unit], count)
+                capacity = self.troopmanager.carry_capacity.get(unit, 0)
+                if capacity > 0:
+                    # Limit template take by what's actually needed for target_capacity
+                    needed = (target_capacity - current_load + capacity - 1) // capacity
+                    take = min(available_troops[unit], count, needed)
+                else:
+                    take = min(available_troops[unit], count)
+                
                 if take > 0:
                     smart_troops[unit] = take
-                    current_load += take * self.troopmanager.carry_capacity.get(unit, 0)
+                    current_load += take * capacity
                     available_troops[unit] -= take
 
         # Phase 2: Fill remaining capacity gap with priority units
@@ -182,6 +217,15 @@ class AttackManager:
         # If we have no troops selected, return None (fail)
         if not smart_troops:
             self.logger.debug("Smart farming failed: no suitable troops available")
+            return None
+
+        # Check thresholds to prevent suicide attacks (e.g., sending 1 lonely axe)
+        total_units = sum(smart_troops.values())
+        if current_load < self.min_farm_capacity or total_units < self.min_farm_units:
+            self.logger.debug(
+                "Smart farming skipped: achieved capacity (%d < %d) or units (%d < %d) too low",
+                current_load, self.min_farm_capacity, total_units, self.min_farm_units
+            )
             return None
 
         # Log the smart farming result
@@ -249,15 +293,35 @@ class AttackManager:
             send_template = scaled_template
             requires_strict = True
 
+        # --- ATOMIC RESERVATION OPTIMIZATION ---
+        # Calculate target capacity for reservation
+        target_capacity = sum(self.troopmanager.carry_capacity.get(u, 0) * int(c) for u, c in send_template.items())
+        # Request roughly equal split of resources for the capacity
+        req_res = target_capacity // 3
+        
+        success, res_w, res_s, res_i = DatabaseManager.reserve_farm_loot(
+            target["id"], req_w=req_res, req_s=req_res, req_i=req_res, 
+            min_threshold=self.min_farm_capacity
+        )
+        
+        if not success:
+            self.logger.debug("Skipping %s: Atomic reservation failed (not enough predicted loot)", target["id"])
+            return 0
+            
+        total_reserved = res_w + res_s + res_i
+        
         smart_template = None
         if self.smart_farming:
-            smart_template = self.get_smart_troops(send_template)
-
+            # Use reserved resources as a target if it's lower than what template would fetch
+            max_loot_target = total_reserved if total_reserved > 0 else 999999
+            smart_template = self.get_smart_troops(send_template, max_loot_cap=max_loot_target)
+            
         missing = False
         if smart_template:
             template = smart_template
+            # Already checked reservation success above, so if we're here, it's worth the trip!
+                
             if requires_strict and hasattr(self.troopmanager, "carry_capacity"):
-                target_capacity = sum(self.troopmanager.carry_capacity.get(u, 0) * int(c) for u, c in send_template.items())
                 achieved_capacity = sum(self.troopmanager.carry_capacity.get(u, 0) * int(c) for u, c in smart_template.items())
                 if achieved_capacity < target_capacity:
                     missing = f"Requires capacity {target_capacity}, but only {achieved_capacity} available."
@@ -364,10 +428,8 @@ class AttackManager:
                     ignored_reasons["unknown_ignored"] += 1
                     continue
             if village["owner"] != "0":
-                get_h = time.localtime().tm_hour
-                if get_h in range(0, 8) or get_h == 23:
-                    ignored_reasons["night_bonus"] += 1
-                    continue
+                # Night bonus check is now handled by FarmOptimizer.evaluate arrival calculation
+                pass
             distance = self.map.get_dist(village["location"])
             if distance > self.farm_radius:
                 if vid not in self.ignored:
@@ -497,6 +559,12 @@ class AttackManager:
             min_time = self.farm_high_prio_wait
         if "low_profile" in cache_entry and cache_entry["low_profile"]:
             min_time = self.farm_low_prio_wait
+        
+        # LVA: Apply competition jitter
+        jitter_pct = DatabaseManager.get_lva_jitter(vid)
+        if jitter_pct > 0:
+            self.logger.info("Competition detected for %s, applying %.1f%% jitter to delay", vid, jitter_pct * 100)
+            min_time = int(min_time * (1 + jitter_pct))
 
         if cache_entry and self.repman:
             res_left, res = self.repman.has_resources_left(vid)
@@ -514,6 +582,50 @@ class AttackManager:
                 vid, min_time
             )
             return False
+
+        # --- FARM OPTIMIZER (CONTESTED DETECTION) ---
+        optimizer = FarmOptimizer(
+            self.village_id,
+            default_wait=self.farm_default_wait,
+            high_prio_wait=self.farm_high_prio_wait,
+            low_prio_wait=self.farm_low_prio_wait,
+        )
+        
+        # Calculate distance for travel time estimation
+        distance = 0
+        if vid in self.map.villages:
+            distance = self.map.get_dist(self.map.villages[vid]["location"])
+            
+        # Get slowest unit from template for speed estimation
+        slowest_unit = "light"
+        from game.farm_optimizer import UNIT_SPEEDS
+        
+        active_template = self.template
+        if isinstance(active_template, list) and len(active_template) > 0:
+            active_template = active_template[0]
+            
+        if isinstance(active_template, dict):
+             current_max = 0
+             for u in active_template:
+                 speed = UNIT_SPEEDS.get(u, 10.0)
+                 if speed > current_max:
+                     current_max = speed
+                     slowest_unit = u
+
+        recommended_wait, reason = optimizer.evaluate(vid, cache_entry["last_attack"], 
+                                                     distance=distance, slowest_unit=slowest_unit)
+        
+        if cache_entry["last_attack"] + recommended_wait > int(time.time()):
+            if reason == "morning_rush_wait":
+                self.logger.info("Morning Rush: village %s scheduled for 08:00:01 (wait %d s)", 
+                                 vid, recommended_wait)
+            else:
+                self.logger.debug(
+                    "FarmOptimizer: skipping %s (reason=%s, recommended_wait=%d)",
+                    vid, reason, recommended_wait
+                )
+            return False
+            
         return cache_entry
 
     def has_troops_available(self, troops):
@@ -574,7 +686,7 @@ class AttackManager:
                 return "forced_peace"
 
         self.logger.info(
-            "[Attack] %s -> %s duration %f.1 h", self.village_id, vid, duration / 3600
+            "[Attack] %s -> %s duration %.1f h", self.village_id, vid, duration / 3600
         )
 
         confirm_data = {}
@@ -583,9 +695,22 @@ class AttackManager:
             if k == "support":
                 continue
             confirm_data[k] = v
+        
+        # Ensure we have at least SOME units in confirmation data
+        # If no units are found, the confirm screen failed or was an error
+        unit_found = False
+        for k in confirm_data:
+            if k in ["spear", "sword", "axe", "archer", "spy", "light", "marcher", "heavy", "ram", "catapult", "knight"]:
+                if int(confirm_data[k]) > 0:
+                    unit_found = True
+                    break
+        
+        if not unit_found:
+             self.logger.error("Attack confirmation failed for %s: No units found in confirmation form. Check session/CSRF.", vid)
+             return False
+
         new_data = {"building": "main", "h": self.wrapper.last_h}
         confirm_data.update(new_data)
-        # The extractor doesn't like the empty cb value, and mistakes its value for x. So I add it here.
         if "x" not in confirm_data:
             confirm_data["x"] = x
 
@@ -595,6 +720,18 @@ class AttackManager:
             params={"screen": "place"},
             data=confirm_data,
         )
+        
+        # Verify if result actually contains a success indication
+        if result and isinstance(result, dict):
+            # In AJAX popup_command, successful attack usually has redirection or command info
+            if "error" in str(result) or "dialog" in str(result):
+                 if "error" in str(result):
+                     self.logger.error("Attack to %s rejected by server: %s", vid, result.get("error"))
+                     return False
+        
+        if not result:
+            self.logger.error("Attack to %s failed: Empty response from server.", vid)
+            return False
 
         self._push_farm_bag_state()
         return result
@@ -659,21 +796,3 @@ class AttackManager:
         else:
             self._farm_bag_limit_reached = True
         self._push_farm_bag_state()
-
-
-class AttackCache:
-    @staticmethod
-    def get_cache(village_id):
-        return FileManager.load_json_file(f"cache/attacks/{village_id}.json")
-
-    @staticmethod
-    def set_cache(village_id, entry):
-        return FileManager.save_json_file(entry, f"cache/attacks/{village_id}.json")
-
-    @staticmethod
-    def cache_grab():
-        output = {}
-
-        for existing in FileManager.list_directory("cache/attacks", ends_with=".json"):
-            output[existing.replace(".json", "")] = FileManager.load_json_file(f"cache/attacks/{existing}")
-        return output

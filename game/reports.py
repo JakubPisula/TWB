@@ -39,25 +39,27 @@ class ReportManager:
     def has_resources_left(self, vid):
         """
         Checks if there are any resources left after farm
-        Used by the farm manager script
+        Uses DatabaseManager for production-aware estimation
         """
+        if _DB_AVAILABLE:
+            res = DatabaseManager.get_predicted_resources(vid)
+            if res and sum(res.values()) > 0:
+                return True, res
+
+        # Fallback to legacy report-only check
         possible_reports = []
         for repid in self.last_reports:
             entry = self.last_reports[repid]
             if vid == entry["dest"] and entry["extra"].get("when", None):
                 possible_reports.append(entry)
-        # self.logger.debug(f"Considered {len(possible_reports)} reports")
+
         if len(possible_reports) == 0:
             return False, {}
 
         def highest_when(attack):
-            """
-            Converts the date of an attack when resource gains were high
-            """
             return datetime.fromtimestamp(int(attack["extra"]["when"]))
 
         entry = max(possible_reports, key=highest_when)
-        self.logger.debug("This is the newest? %s", datetime.fromtimestamp(int(entry["extra"]["when"])))
         if entry["extra"].get("resources", None):
             return True, entry["extra"]["resources"]
         return False, {}
@@ -130,8 +132,9 @@ class ReportManager:
             # Optionally check database if report exists to prevent redundant downloads
             try:
                 if getattr(DatabaseManager, 'get_report', None):
-                    if DatabaseManager.get_report(report_id):
-                        self.last_reports[report_id] = True
+                    report_data = DatabaseManager.get_report(report_id)
+                    if report_data:
+                        self.last_reports[report_id] = report_data
                         continue
             except Exception:
                 pass
@@ -354,6 +357,7 @@ class ReportManager:
                     losses      = {k: int(v) for k, v in losses.items()} if losses else {},
                     scout_resources = {k: int(v) for k, v in scout_res.items()} if scout_res else None,
                     scout_buildings = scout_bld,
+                    created_at  = datetime.fromtimestamp(extra["when"]) if extra.get("when") else None,
                 )
                 # Update production estimate from scout building data
                 if scout_bld and to_village:
@@ -475,29 +479,79 @@ class ReportManager:
 
 class ReportCache:
     """
-    File cache for local reports
+    Cache raportów — DB jako primary source, plik JSON jako fallback.
+
+    Strategia:
+    - get_cache:  DB first, fallback plik.
+    - set_cache:  tylko plik JEŚLI DB niedostępna (raport już zapisany do
+                  DBReport przez attack_report / put, więc nie trzeba duplikować).
+    - cache_grab: DB first, uzupełniamy brakującymi plikami.
     """
+
     @staticmethod
-    def get_cache(report_id):
-        """
-        Reads a report entry
-        """
+    def get_cache(report_id) -> dict | None:
+        """Zwraca raport. Priorytet: DB → plik JSON."""
+        if _DB_AVAILABLE:
+            try:
+                data = DatabaseManager.get_report(str(report_id))
+                if data:
+                    # Znormalizuj do starego formatu (backward compat)
+                    return {
+                        "type":   data.get("type", ""),
+                        "origin": data.get("origin"),
+                        "dest":   data.get("dest"),
+                        "losses": data.get("losses", {}),
+                        "extra":  data.get("extra", {}),
+                    }
+            except Exception:
+                pass
         return FileManager.load_json_file(f"cache/reports/{report_id}.json")
 
     @staticmethod
-    def set_cache(report_id, entry):
+    def set_cache(report_id, entry: dict) -> None:
+        """Persystuje raport.
+
+        Jeśli DB jest dostępna — raport jest już zapisany przez DatabaseManager.save_report()
+        wywołane wcześniej w attack_report(), więc nie duplikujemy. Zapis do pliku
+        zachowany tylko gdy DB niedostępna (fallback).
         """
-        Creates a report entry
-        """
-        FileManager.save_json_file(entry, f"cache/reports/{report_id}.json")
+        if not _DB_AVAILABLE:
+            FileManager.save_json_file(entry, f"cache/reports/{report_id}.json")
 
     @staticmethod
-    def cache_grab():
-        """
-        Reads all locally stored reports
-        """
-        output = {}
+    def cache_grab() -> dict:
+        """Zwraca wszystkie raporty. Priorytet: DB → pliki JSON."""
+        output: dict = {}
 
+        # 1. Pobierz z DB
+        if _DB_AVAILABLE:
+            try:
+                from sqlalchemy.orm import sessionmaker
+                from core.database import get_session
+                from core.models import DBReport
+                s = get_session()
+                if s:
+                    try:
+                        rows = s.query(DBReport).order_by(DBReport.created_at.desc()).limit(500).all()
+                        for r in rows:
+                            output[str(r.report_id)] = {
+                                "type":   r.report_type,
+                                "origin": r.origin_id,
+                                "dest":   r.dest_id,
+                                "losses": r.losses_json or {},
+                                "extra":  r.raw_extra or {},
+                            }
+                    finally:
+                        s.close()
+            except Exception:
+                pass
+
+        # 2. Uzupełnij plikami których nie ma w DB (legacy / migracja)
         for existing in FileManager.list_directory("cache/reports", ends_with=".json"):
-            output[existing.replace(".json", "")] = FileManager.load_json_file(f"cache/reports/{existing}")
+            rid = existing.replace(".json", "")
+            if rid not in output:
+                entry = FileManager.load_json_file(f"cache/reports/{existing}")
+                if entry:
+                    output[rid] = entry
+
         return output

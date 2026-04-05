@@ -4,48 +4,6 @@
 
 <div class="row">
     <div class="col-lg-8">
-        <h4>Reports</h4>
-        <table class="table table-striped">
-            <thead>
-                <tr>
-                    <th>ID</th>
-                    <th>Type</th>
-                    <th>Data</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for report in data.reports %}
-                <tr>
-                    <td>{{ report }}</td>
-                    <td>{{ data.reports[report].type }}</td>
-                    <td>
-                        <div style="max-height: 200px; overflow-y: auto; font-size: 13px;">
-                            {% if data.reports[report].losses %}
-                            {% for key, val in data.reports[report].losses.items() %}
-                            <span class="badge badge-danger">
-                                <img src="/static/images/unit_{{key}}.png" style="height: 14px;"
-                                    onerror="this.style.display='none'"> {{ val }}
-                            </span>
-                            {% endfor %}
-                            <br>
-                            {% endif %}
-                            {% if data.reports[report].extra and data.reports[report].extra.loot %}
-                            {% for key, val in data.reports[report].extra.loot.items() %}
-                            <span class="badge badge-success">
-                                <img src="/static/images/{{key}}.png" style="height: 14px;"
-                                    onerror="this.style.display='none'"> {{ val }}
-                            </span>
-                            {% endfor %}
-                            {% else %}
-                            {{ data.reports[report].extra | tojson }}
-                            {% endif %}
-                        </div>
-                    </td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-        <hr>
         <h4>Console Logs</h4>
         <ul class="nav nav-pills mt-2 mb-2" id="logTabs" role="tablist">
             <li class="nav-item">
@@ -63,6 +21,138 @@
             Loading logs...
         </div>
         <a href="/api/logs/download" class="btn btn-primary btn-sm mt-2" target="_blank">Download Bot Log</a>
+        
+        <hr>
+        
+        <h4>Reports</h4>
+        <div style="max-height: 400px; overflow-y: auto; border: 1px solid #dee2e6; border-radius: 4px;">
+            <table class="table table-striped mb-0">
+                <thead style="position: sticky; top: 0; background-color: #f8f9fa; z-index: 1;">
+                    <tr>
+                        <th>Village</th>
+                        <th>Type</th>
+                        <th>Data</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for report in data.reports %}
+                    {% set r_data = data.reports[report] %}
+                    <tr>
+                        <td>
+                            <a href="{{ session.endpoint or 'https://pl227.plemiona.pl/game.php' }}?screen=info_village&id={{ r_data.dest }}" 
+                               target="_blank" title="Open in game">
+                                <b>{{ r_data.dest_name or r_data.dest }}</b>
+                            </a>
+                            <br>
+                            <small class="text-muted">
+                                ({{ r_data.dest }}) <br>
+                                Report: <a href="{{ session.endpoint or 'https://pl227.plemiona.pl/game.php' }}?screen=report&mode=all&view={{ report }}" target="_blank">{{ report }}</a>
+                            </small>
+                        </td>
+                        <td>
+                            {% if r_data.type == 'attack' %}
+                            <span class="badge badge-danger">Attack</span>
+                            {% elif r_data.type == 'scout' %}
+                            <span class="badge badge-info">Scout</span>
+                            {% else %}
+                            {{ r_data.type }}
+                            {% endif %}
+                        </td>
+                        <td>
+                            <div style="font-size: 12px;">
+                                {% set extra_data = r_data.extra if r_data.extra else r_data %}
+                                
+                                {% if r_data.losses and r_data.losses is mapping %}
+                                <div class="mb-1">
+                                    <b>My Losses:</b>
+                                    {% for key, val in r_data.losses.items() %}
+                                    <span class="badge badge-danger">
+                                        <img src="/static/images/unit_{{key}}.png" style="height: 12px;"
+                                            onerror="this.style.display='none'"> {{ val }}
+                                    </span>
+                                    {% endfor %}
+                                </div>
+                                {% endif %}
+
+                                {% if extra_data.units_sent and extra_data.units_sent is mapping %}
+                                <div class="mb-1">
+                                    <b>Units Sent:</b>
+                                    {% for key, val in extra_data.units_sent.items() %}
+                                    <span class="badge badge-secondary">
+                                        <img src="/static/images/unit_{{key}}.png" style="height: 12px;"
+                                            onerror="this.style.display='none'"> {{ val }}
+                                    </span>
+                                    {% endfor %}
+                                </div>
+                                {% endif %}
+                                
+                                {% if extra_data.loot and extra_data.loot is mapping %}
+                                <div class="mb-1">
+                                    <b>Loot:</b>
+                                    {% for key, val in extra_data.loot.items() %}
+                                    <span class="badge badge-success">
+                                        <img src="/static/images/{{key}}.png" style="height: 12px;"
+                                            onerror="this.style.display='none'"> {{ val }}
+                                    </span>
+                                    {% endfor %}
+                                </div>
+                                {% endif %}
+                                
+                                {% if extra_data.resources and extra_data.resources is mapping %}
+                                <div class="mb-1">
+                                    <b>Spotted Resources:</b>
+                                    {% for key, val in extra_data.resources.items() %}
+                                    <span class="badge border bg-light text-dark">
+                                        <img src="/static/images/{{key}}.png" style="height: 12px;"
+                                            onerror="this.style.display='none'"> {{ val }}
+                                    </span>
+                                    {% endfor %}
+                                </div>
+                                {% endif %}
+
+                                {% if extra_data.defence_units and extra_data.defence_units is mapping %}
+                                <div class="mb-1">
+                                    <b>Def. Units:</b>
+                                    {% for key, val in extra_data.defence_units.items() %}
+                                    <span class="badge border bg-light text-dark">
+                                        <img src="/static/images/unit_{{key}}.png" style="height: 12px;"
+                                            onerror="this.style.display='none'"> {{ val }}
+                                    </span>
+                                    {% endfor %}
+                                </div>
+                                {% endif %}
+
+                                {% if extra_data.units_away and extra_data.units_away is mapping %}
+                                <div class="mb-1">
+                                    <b>Units Away:</b>
+                                    {% for key, val in extra_data.units_away.items() %}
+                                    <span class="badge border bg-light text-dark">
+                                        <img src="/static/images/unit_{{key}}.png" style="height: 12px;"
+                                            onerror="this.style.display='none'"> {{ val }}
+                                    </span>
+                                    {% endfor %}
+                                </div>
+                                {% endif %}
+
+                                {% if extra_data.buildings and extra_data.buildings is mapping %}
+                                <div class="mt-1" style="font-size: 11px; columns: 2; width: 100%; border-top: 1px dotted #ccc; padding-top: 4px;">
+                                    <b>Buildings (Scouted):</b>
+                                    {% for b, lvl in extra_data.buildings.items() %}
+                                    <div>{{ b }}: {{ lvl }}</div>
+                                    {% endfor %}
+                                </div>
+                                {% endif %}
+                                
+                                {% if not r_data.losses and not extra_data.loot and not extra_data.resources and not extra_data.buildings and not extra_data.units_sent and not extra_data.defence_units and not extra_data.units_away %}
+                                <pre style="font-size: 10px; margin-bottom: 0;">{{ extra_data | tojson(indent=2) }}</pre>
+                                {% endif %}
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                 </tbody>
+            </table>
+        </div>
     </div>
     <div class="col-lg-4">
         <h4>Bot</h4>
